@@ -57,8 +57,8 @@
 
       @keyframes eye-track {
         0%, 10%, 25%, 43%, 60%, 100% { transform: translate(0, 0); }
-        12%, 22% { transform: translate(3px, 0); }  /* Look Right */
-        48%, 57% { transform: translate(-3px, 0); }  /* Look Left */
+        12%, 22% { transform: translate(2px, 0); }  /* Look Right */
+        48%, 57% { transform: translate(-2px, 0); }  /* Look Left */
       }
 
       @keyframes eye-blink {

@@ -2,13 +2,14 @@
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="pet-container">
-        <img id="pet-img" src="" />
-    </div>
-    <script src="avatar.js"></script>
-    <script src="motion.js"></script>
+    <div id="bubble" class="hidden"></div>
+    <div id="stage"></div>
+    <script src="sprites.js"></script>
+    <script src="seasonal.js"></script>
+    <script src="pet.js"></script>
 </body>
 </html>

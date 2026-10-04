@@ -90,8 +90,8 @@
 
       @keyframes eye-track {
         0%, 10%, 25%, 38%, 52%, 58%, 80%, 100% { transform: translate(0px, 0px); }
-        12%, 22% { transform: translate(3px, 0px); } /* Look Right */
-        42%, 50% { transform: translate(-3px, 0px); } /* Look Left */
+        12%, 22% { transform: translate(2px, 0px); } /* Look Right */
+        42%, 50% { transform: translate(-2px, 0px); } /* Look Left */
         60%, 75% { transform: translate(0px, -1px); } /* Look slightly up during yawn */
       }
 

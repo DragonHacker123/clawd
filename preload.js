@@ -2,31 +2,28 @@ const { contextBridge, ipcRenderer } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
-function getGifDuration(filePath) {
-  const buf = fs.readFileSync(filePath);
-  let delay = 0;
-  for (let i = 0; i < buf.length - 5; i++) {
-    if (buf[i] === 0x21 && buf[i+1] === 0xF9 && buf[i+2] === 0x04) {
-      delay += buf[i+4] | (buf[i+5] << 8);
-    }
-  }
-  return Math.max(delay * 10, 1000);
+const SVG_DIR = path.join(__dirname, 'assets', 'svg');
+
+function on(channel, fn) {
+  ipcRenderer.on(channel, (_event, payload) => fn(payload));
 }
 
-contextBridge.exposeInMainWorld('electronAPI', {
-  moveWindow: (pos) => ipcRenderer.send('move-window', pos),
-  getScreenSize: () => ipcRenderer.invoke('get-screen-size'),
-  getGifs: () => {
-    try {
-      const gifDir = path.join(__dirname, 'assets', 'gif');
-      return fs.readdirSync(gifDir)
-        .filter(f => f.endsWith('.gif'))
-        .map(f => ({
-          name: f,
-          duration: getGifDuration(path.join(gifDir, f))
-        }));
-    } catch {
-      return [];
-    }
-  }
+contextBridge.exposeInMainWorld('clawd', {
+  readSvg: (name) => {
+    if (!/^[a-z0-9-]+$/.test(name)) throw new Error(`bad sprite name: ${name}`);
+    return fs.readFileSync(path.join(SVG_DIR, `${name}.svg`), 'utf8');
+  },
+  hitbox: (box) => ipcRenderer.send('hitbox', box),
+  dragStart: () => ipcRenderer.send('drag-start'),
+  dragMove: (dx, dy) => ipcRenderer.send('drag-move', { dx, dy }),
+  dragEnd: () => ipcRenderer.send('drag-end'),
+  showMenu: () => ipcRenderer.send('show-menu'),
+  ready: () => ipcRenderer.send('renderer-ready'),
+  onActivity: (fn) => on('activity', fn),
+  onFlash: (fn) => on('flash', fn),
+  onOutfit: (fn) => on('outfit', fn),
+  onBubble: (fn) => on('bubble', fn),
+  onMotion: (fn) => on('motion', fn),
+  onPosture: (fn) => on('posture', fn),
+  onWake: (fn) => on('wake', fn),
 });

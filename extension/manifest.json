@@ -1,0 +1,37 @@
+{
+  "manifest_version": "0.3",
+  "name": "clawd",
+  "display_name": "Clawd",
+  "version": "2.0.0",
+  "description": "Lets Claude chat dress up and animate Clawd, the pixel mascot on your desktop.",
+  "long_description": "Clawd is a small desktop pet. With this extension, Claude can give him an outfit that matches what your conversation is about (talk about a DofE expedition and he gets a backpack) and make him react. Needs the Clawd desktop app running on this computer; it only talks to it over localhost.",
+  "author": {
+    "name": "Cameron"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/server/index.js"
+      ]
+    }
+  },
+  "tools": [
+    {
+      "name": "clawd_set_topic",
+      "description": "Dress Clawd in an accessory that matches the conversation topic."
+    },
+    {
+      "name": "clawd_react",
+      "description": "Make Clawd do a short reaction (happy, celebrate, confused...)."
+    }
+  ],
+  "compatibility": {
+    "platforms": [
+      "win32"
+    ]
+  },
+  "icon": "icon.png"
+}

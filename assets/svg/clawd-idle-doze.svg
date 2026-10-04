@@ -69,4 +69,29 @@
       <rect x="10" y="8" width="1" height="2"/>
     </g>
   </g>
+  <!-- Small z's drifting up while he nods off -->
+  <defs>
+    <style>
+      .dz { opacity: 0; transform-box: fill-box; }
+      .dz1 { animation: doze-float 4s infinite ease-in-out; }
+      .dz2 { animation: doze-float 4s infinite ease-in-out 2s; }
+      @keyframes doze-float {
+        0% { transform: translate(11px, 5px) scale(0.5); opacity: 0; }
+        15% { opacity: 0.9; }
+        60% { transform: translate(14px, 0px) scale(0.8); opacity: 0.8; }
+        100% { transform: translate(12px, -4px) scale(1); opacity: 0; }
+      }
+    </style>
+    <g id="doze-z">
+      <rect x="0" y="0" width="4" height="0.8" />
+      <rect x="2.4" y="0.8" width="0.8" height="0.8" />
+      <rect x="1.6" y="1.6" width="0.8" height="0.8" />
+      <rect x="0.8" y="2.4" width="0.8" height="0.8" />
+      <rect x="0" y="3.2" width="4" height="0.8" />
+    </g>
+  </defs>
+  <g fill="#B0BEC5">
+    <use href="#doze-z" class="dz dz1"/>
+    <use href="#doze-z" class="dz dz2"/>
+  </g>
 </svg>

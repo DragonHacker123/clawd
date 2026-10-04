@@ -1,7 +1,7 @@
 {
   "name": "clawd-desktop",
-  "version": "1.0.9",
-  "description": "A pixel-art Claude mascot that lives on your desktop",
+  "version": "2.0.0",
+  "description": "A pixel-art Claude mascot that lives on your desktop and reacts to what Claude is doing",
   "main": "main.js",
   "bin": {
     "clawd-desktop": "./bin/claude-pet.js"
@@ -10,13 +10,20 @@
     "main.js",
     "preload.js",
     "renderer/",
+    "src/",
+    "hooks/",
+    "mcp/",
     "assets/",
     "bin/"
   ],
   "scripts": {
     "start": "electron .",
+    "install-hooks": "node hooks/install-hooks.js",
+    "uninstall-hooks": "node hooks/install-hooks.js --uninstall",
+    "build-extension": "python tools/build-extension.py",
+    "gallery": "electron tools/gallery.js gallery.png",
     "build": "electron-builder",
-    "test": "echo \"No tests\" && exit 0"
+    "test": "node tools/test.js"
   },
   "keywords": [
     "claude",

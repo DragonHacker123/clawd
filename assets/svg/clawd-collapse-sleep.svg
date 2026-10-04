@@ -198,16 +198,19 @@
     </style>
 
     <g id="pixel-z">
-      <rect x="0" y="0" width="4" height="1"/>
-      <rect x="2" y="1" width="1" height="1"/>
-      <rect x="1" y="2" width="1" height="1"/>
-      <rect x="0" y="3" width="4" height="1"/>
+      <rect x="0" y="0" width="5" height="1" />
+      <rect x="3" y="1" width="1" height="1" />
+      <rect x="2" y="2" width="1" height="1" />
+      <rect x="1" y="3" width="1" height="1" />
+      <rect x="0" y="4" width="5" height="1" />
     </g>
 
     <g id="pixel-z-small">
-      <rect x="0" y="0" width="3" height="1"/>
-      <rect x="1" y="1" width="1" height="1"/>
-      <rect x="0" y="2" width="3" height="1"/>
+      <rect x="0" y="0" width="4" height="0.8" />
+      <rect x="2.4" y="0.8" width="0.8" height="0.8" />
+      <rect x="1.6" y="1.6" width="0.8" height="0.8" />
+      <rect x="0.8" y="2.4" width="0.8" height="0.8" />
+      <rect x="0" y="3.2" width="4" height="0.8" />
     </g>
   </defs>
 

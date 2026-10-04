@@ -121,6 +121,7 @@ function clampToWorld(x, y) {
 // and no other window covers HIM. A smaller window elsewhere on screen (say
 // Spotify in the middle while he's on the taskbar) doesn't hide him.
 function wantVisible() {
+  if (physics && physics.mode === 'held') return true; // never vanish from under your mouse mid-drag
   if (hiddenByUser) return false;
   if (state.onlyWhileWorking && brain && !brain.isBusy()) return false;
   if (!state.onlyInClaude || !fgState.available) return true;
@@ -377,6 +378,31 @@ ipcMain.on('renderer-ready', () => {
 // to the window being hidden/shown, which broke the old forwarded-mousemove way.)
 let hitbox = { x0: 50, y0: 70, x1: 100, y1: 140 };
 let interactive = false;
+let lastAssert = 0;
+let notPressingFor = 0;
+
+// Recent click-path events, for diagnosing "I can't grab him" (GET /debug/clicks).
+const clickLog = [];
+function noteClick(what) {
+  clickLog.push(`${new Date().toISOString().slice(11, 23)} ${what}`);
+  if (clickLog.length > 60) clickLog.shift();
+}
+
+// The page says every second whether a press is really down. If main still
+// thinks he's held without one (a release got lost), let him go.
+ipcMain.on('press-state', (_e, pressing) => {
+  if (physics && physics.mode === 'held' && !pressing) {
+    notPressingFor += 1;
+    if (notPressingFor >= 2) {
+      noteClick('stuck held with no press: letting go');
+      notPressingFor = 0;
+      dragOrigin = null;
+      letGo();
+    }
+  } else {
+    notPressingFor = 0;
+  }
+});
 
 ipcMain.on('hitbox', (_e, box) => {
   if (box && [box.x0, box.y0, box.x1, box.y1].every(Number.isFinite)) hitbox = box;
@@ -393,8 +419,12 @@ function hitTest() {
     const [wx, wy] = win.getPosition();
     on = c.x >= wx + hitbox.x0 && c.x <= wx + hitbox.x1 && c.y >= wy + hitbox.y0 && c.y <= wy + hitbox.y1;
   }
-  if (on !== interactive) {
+  // Apply on change, and re-assert every second in case anything reset it.
+  const now = Date.now();
+  if (on !== interactive || now - lastAssert > 1000) {
+    if (on !== interactive) noteClick(on ? 'cursor over him: taking clicks' : 'cursor left: click-through');
     interactive = on;
+    lastAssert = now;
     win.setIgnoreMouseEvents(!on);
   }
 }
@@ -402,6 +432,7 @@ function hitTest() {
 // Drags follow the real cursor position from the OS, which stays correct on
 // mixed-DPI multi-monitor setups where renderer screen coords drift.
 ipcMain.on('drag-start', () => {
+  noteClick(`press (physics was ${physics && physics.mode})`);
   if (!win) return;
   dragOrigin = { win: win.getPosition(), cursor: screen.getCursorScreenPoint() };
   physics.grab();
@@ -438,6 +469,7 @@ function letGo() {
 }
 
 ipcMain.on('drag-end', () => {
+  noteClick('release');
   dragOrigin = null;
   letGo();
 });
@@ -526,7 +558,8 @@ app.whenReady().then(() => {
     visible: !!(win && win.isVisible()), fg: fgState, world: world(), hitbox, interactive,
     cursor: screen.getCursorScreenPoint(),
   });
-  startServer(brain, { snap, input, surfacesDebug, settleNow, dropAt, physicsState }).catch((err) => console.error('event server failed', err));
+  const clicks = () => ({ interactive, hitbox, mode: physics.mode, cursor: screen.getCursorScreenPoint(), win: win && win.getPosition(), log: clickLog });
+  startServer(brain, { snap, input, surfacesDebug, settleNow, dropAt, physicsState, clicks }).catch((err) => console.error('event server failed', err));
 
   surfaces = new Surfaces({ getWindow: () => win, getMask: clawdMask, log });
   physics = new Physics({
@@ -567,7 +600,7 @@ app.whenReady().then(() => {
     }
   };
   trackLoop();
-  setInterval(hitTest, 40);
+  setInterval(hitTest, 30);
   win.webContents.once('did-finish-load', () => setTimeout(() => state.gravity && physics.settle(), 800));
 
   screen.on('display-removed', () => {

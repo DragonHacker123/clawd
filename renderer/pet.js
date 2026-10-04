@@ -250,6 +250,12 @@
   }
   stage.addEventListener('pointerup', endPress);
   stage.addEventListener('pointercancel', endPress);
+  // If the pointer is lost mid-press (window hidden, capture broken), end it
+  // rather than leaving him stuck "held".
+  stage.addEventListener('lostpointercapture', (e) => {
+    if (press) endPress(e);
+  });
+  setInterval(() => api.pressState(!!press), 1000);
 
   stage.addEventListener('contextmenu', (e) => {
     e.preventDefault();

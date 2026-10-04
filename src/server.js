@@ -35,6 +35,7 @@ function startServer(brain, debug = {}) {
     if (req.method === 'GET' && req.url === '/health') return reply(200, { ok: true });
     if (req.method === 'GET' && req.url === '/debug/state') return reply(200, brain.debugState());
     if (req.method === 'GET' && req.url === '/debug/physics' && debug.physicsState) return reply(200, debug.physicsState());
+    if (req.method === 'GET' && req.url === '/debug/clicks' && debug.clicks) return reply(200, debug.clicks());
     if (req.method === 'GET' && req.url === '/debug/surfaces' && debug.surfacesDebug) {
       debug.surfacesDebug().then((r) => reply(200, r), (err) => reply(500, { error: String(err.stack || err) }));
       return;

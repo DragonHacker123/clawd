@@ -556,9 +556,15 @@ app.whenReady().then(() => {
   // at once; while nothing changes, back off to ~1.5 s between looks. Each
   // capture costs ~280 ms of work, so this keeps him cheap when idle.
   const trackLoop = async () => {
-    const moved = await trackTick();
-    trackDelay = moved ? 60 : Math.min(1200, trackDelay * 1.6);
-    setTimeout(trackLoop, trackDelay);
+    try {
+      const moved = await trackTick();
+      trackDelay = moved ? 60 : Math.min(1200, trackDelay * 1.6);
+    } catch (err) {
+      console.error('track loop', err);
+      surfaces.busy = false;
+    } finally {
+      setTimeout(trackLoop, trackDelay); // never let one error stop him following ledges
+    }
   };
   trackLoop();
   setInterval(hitTest, 40);

@@ -255,7 +255,15 @@
   stage.addEventListener('lostpointercapture', (e) => {
     if (press) endPress(e);
   });
-  setInterval(() => api.pressState(!!press), 1000);
+  // Diagnostics: what mouse input actually reaches the page each second.
+  const seen = { move: 0, down: 0 };
+  window.addEventListener('pointermove', () => seen.move++, true);
+  window.addEventListener('pointerdown', () => seen.down++, true);
+  setInterval(() => {
+    api.pressState(!!press, { ...seen, anim: shownKey.split('|')[0] });
+    seen.move = 0;
+    seen.down = 0;
+  }, 1000);
 
   stage.addEventListener('contextmenu', (e) => {
     e.preventDefault();

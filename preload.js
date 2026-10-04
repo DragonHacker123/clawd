@@ -14,7 +14,7 @@ contextBridge.exposeInMainWorld('clawd', {
     return fs.readFileSync(path.join(SVG_DIR, `${name}.svg`), 'utf8');
   },
   hitbox: (box) => ipcRenderer.send('hitbox', box),
-  pressState: (pressing) => ipcRenderer.send('press-state', pressing),
+  pressState: (pressing, seen) => ipcRenderer.send('press-state', pressing, seen),
   dragStart: () => ipcRenderer.send('drag-start'),
   dragMove: (dx, dy) => ipcRenderer.send('drag-move', { dx, dy }),
   dragEnd: () => ipcRenderer.send('drag-end'),

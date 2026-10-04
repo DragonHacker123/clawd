@@ -133,9 +133,9 @@ function wantVisible() {
 }
 
 function refreshVisibility() {
-  const before = win && win.isVisible();
+  const before = win && isShown();
   setVisible(wantVisible());
-  if (!before && win && win.isVisible() && physics && state.gravity) physics.settle();
+  if (!before && win && isShown() && physics && state.gravity) physics.settle();
 }
 
 // Keep him inside Claude's window after it opens, restores or resizes.
@@ -172,7 +172,7 @@ function onForeground(next) {
 let trackDelay = 60;
 
 async function trackTick() {
-  if (!win || !state.gravity || !win.isVisible() || !physics || physics.mode !== 'ground' || surfaces.busy) return;
+  if (!win || !state.gravity || !isShown() || !physics || physics.mode !== 'ground' || surfaces.busy) return;
   const g = physics.ground;
   if (!g || g.kind === 'floor' || g.kind === 'taskbar') return;
   surfaces.busy = true;
@@ -233,7 +233,7 @@ function createWindow() {
     resizable: false,
     hasShadow: false,
     focusable: false,
-    show: !state.onlyWhileWorking,
+    show: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -261,10 +261,20 @@ function createWindow() {
   });
 }
 
+// "Hidden" means fully transparent and click-through, never win.hide(): a
+// transparent, non-focusable Electron window that's hidden and re-shown keeps
+// getting clicks routed to it by Windows but stops passing them to the page
+// (reproduced: one hide/show and he can't be grabbed until restarted).
+let shown = true;
+function isShown() {
+  return !!win && shown;
+}
+
 function setVisible(visible) {
-  if (!win) return;
-  if (visible && !win.isVisible()) win.showInactive();
-  if (!visible && win.isVisible()) win.hide();
+  if (!win || visible === shown) return;
+  shown = visible;
+  win.setOpacity(visible ? 1 : 0);
+  interactive = null; // hitTest re-applies click-through on its next tick
 }
 
 // ---------- tray / context menu ----------
@@ -358,7 +368,7 @@ function createTray() {
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip('Clawd');
   tray.on('click', () => {
-    hiddenByUser = !!(win && win.isVisible());
+    hiddenByUser = !!isShown();
     refreshVisibility();
   });
   tray.on('right-click', () => tray.popUpContextMenu(buildMenu()));
@@ -379,6 +389,7 @@ ipcMain.on('renderer-ready', () => {
 let hitbox = { x0: 50, y0: 70, x1: 100, y1: 140 };
 let interactive = false;
 let lastAssert = 0;
+let forceInteractiveUntil = 0; // debug: POST /debug/force-interactive
 let notPressingFor = 0;
 
 // Recent click-path events, for diagnosing "I can't grab him" (GET /debug/clicks).
@@ -390,7 +401,10 @@ function noteClick(what) {
 
 // The page says every second whether a press is really down. If main still
 // thinks he's held without one (a release got lost), let him go.
-ipcMain.on('press-state', (_e, pressing) => {
+let lastAnim = '';
+ipcMain.on('press-state', (_e, pressing, seen) => {
+  if (seen && seen.anim) lastAnim = seen.anim;
+  if (seen && (seen.move || seen.down)) noteClick(`page saw ${seen.move} moves, ${seen.down} presses (window taking clicks: ${interactive})`);
   if (physics && physics.mode === 'held' && !pressing) {
     notPressingFor += 1;
     if (notPressingFor >= 2) {
@@ -409,11 +423,16 @@ ipcMain.on('hitbox', (_e, box) => {
 });
 
 function hitTest() {
-  if (!win || !win.isVisible()) {
-    interactive = null; // re-apply after he's shown again
+  if (!win) return;
+  if (!isShown()) {
+    // Faded out: let every click through to whatever is underneath.
+    if (interactive !== false) {
+      interactive = false;
+      win.setIgnoreMouseEvents(true);
+    }
     return;
   }
-  let on = physics && physics.mode === 'held';
+  let on = (physics && physics.mode === 'held') || Date.now() < forceInteractiveUntil;
   if (!on) {
     const c = screen.getCursorScreenPoint();
     const [wx, wy] = win.getPosition();
@@ -555,11 +574,12 @@ app.whenReady().then(() => {
   const physicsState = () => ({
     mode: physics.mode, x: physics.x, y: physics.y, vx: physics.vx, vy: physics.vy,
     walk: physics.walk, ground: physics.ground, sitting: physics.sitting, activity: physics.activity,
-    visible: !!(win && win.isVisible()), fg: fgState, world: world(), hitbox, interactive,
+    visible: !!isShown(), fg: fgState, world: world(), hitbox, interactive,
     cursor: screen.getCursorScreenPoint(),
   });
-  const clicks = () => ({ interactive, hitbox, mode: physics.mode, cursor: screen.getCursorScreenPoint(), win: win && win.getPosition(), log: clickLog });
-  startServer(brain, { snap, input, surfacesDebug, settleNow, dropAt, physicsState, clicks }).catch((err) => console.error('event server failed', err));
+  const forceInteractive = (ms) => { forceInteractiveUntil = Date.now() + Math.min(Number(ms) || 3000, 15000); };
+  const clicks = () => ({ anim: lastAnim, interactive, hitbox, mode: physics.mode, cursor: screen.getCursorScreenPoint(), win: win && win.getPosition(), log: clickLog });
+  startServer(brain, { snap, input, surfacesDebug, settleNow, dropAt, physicsState, clicks, forceInteractive }).catch((err) => console.error('event server failed', err));
 
   surfaces = new Surfaces({ getWindow: () => win, getMask: clawdMask, log });
   physics = new Physics({

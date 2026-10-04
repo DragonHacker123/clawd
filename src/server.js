@@ -79,6 +79,10 @@ function startServer(brain, debug = {}) {
           debug.dropAt(body);
           return reply(200, { ok: true });
         }
+        if (req.url === '/debug/force-interactive' && debug.forceInteractive) {
+          debug.forceInteractive(body.ms);
+          return reply(200, { ok: true });
+        }
         if (req.url === '/debug/input' && debug.input) {
           debug.input(body.events || []);
           return reply(200, { ok: true });

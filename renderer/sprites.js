@@ -65,9 +65,45 @@
   // Animations where Clawd already wears his own hat (wizard hat, hard hat).
   const OWN_HAT = new Set(['clawd-working-wizard', 'clawd-working-building']);
 
+  // Animations where both hands are busy with something drawn outside the arm
+  // groups (keyboard, balls, box, baton, book, broom).
+  const BOTH_HANDS = new Set(['clawd-working-typing', 'clawd-mini-typing', 'clawd-working-juggling',
+    'clawd-working-carrying', 'clawd-working-conducting', 'clawd-idle-reading', 'clawd-working-sweeping']);
+
+  // Which of his hands ('l' = arm at x 0..2, 'r' = arm at x 13..15) are already
+  // holding something in this animation: an arm group containing anything
+  // that isn't Clawd himself (a hammer, a wand...).
+  function busyHands(svg, name) {
+    if (BOTH_HANDS.has(name)) return new Set(['l', 'r']);
+    const busy = new Set();
+    for (const g of svg.querySelectorAll('[class*="arm"]')) {
+      const rects = [...g.querySelectorAll('rect')];
+      const bodyRects = rects.filter((r) => /^#de886d$/i.test(fillOf(r, svg)));
+      const props = rects.length - bodyRects.length + g.querySelectorAll('path, polygon, circle, use, line').length;
+      if (!props || !bodyRects.length) continue;
+      const x = Math.min(...bodyRects.map((r) => num(r, 'x')));
+      busy.add(x < 7.5 ? 'l' : 'r');
+    }
+    return busy;
+  }
+
+  // A held item in a hand that's already busy moves to the free hand, or is
+  // put away if both are busy (no spanner and hammer in one fist).
+  function freeHand(svg, name, acc) {
+    if (acc.slot !== 'hand') return acc;
+    const b = accBounds(acc);
+    if (!b) return acc;
+    const side = (b.x0 + b.x1) / 2 < 7.5 ? 'l' : 'r';
+    const busy = busyHands(svg, name);
+    if (!busy.has(side)) return acc;
+    return busy.has(side === 'l' ? 'r' : 'l') ? null : mirror(acc);
+  }
+
   function dress(svg, name, accessories) {
     const torso = findTorso(svg);
-    for (const acc of accessories) {
+    for (const original of accessories) {
+      const acc = freeHand(svg, name, original);
+      if (!acc) continue;
       if (acc.slot === 'head' && OWN_HAT.has(name)) continue;
       if (acc.slot === 'companion') {
         svg.appendChild(buildGroup(acc, 0));

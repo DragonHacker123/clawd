@@ -36,6 +36,9 @@ class Pet {
     this.lastAnim = '';
     this.clickLog = [];
     this.closing = false;
+    this.lastState = {}; // activity/outfit/posture last sent, replayed into a new window
+    this.expectPress = null;
+    this.coveredBySystem = false; // a system surface (e.g. a notification toast) is on top of him
 
     this.win = this.createWindow(x, y);
     this.physics = new Physics({
@@ -84,6 +87,7 @@ class Pet {
   // ---------- messages to his page ----------
 
   send(channel, payload) {
+    if (['activity', 'outfit', 'posture'].includes(channel)) this.lastState[channel] = payload;
     if (channel === 'activity') this.physics && this.physics.setActivity(payload);
     if (channel === 'posture') this.physics && this.physics.setSitting(payload === 'sit');
     if (this.win && this.ready) this.win.webContents.send(channel, payload);
@@ -91,9 +95,11 @@ class Pet {
   }
 
   onReady() {
+    const first = !this.everReady;
     this.ready = true;
+    this.everReady = true;
     for (const [channel, payload] of this.pending.splice(0)) this.win.webContents.send(channel, payload);
-    setTimeout(() => this.ctx.state.gravity && this.physics.settle(), 800);
+    if (first) setTimeout(() => this.ctx.state.gravity && this.physics.settle(), 800);
   }
 
   onRest() {
@@ -149,6 +155,7 @@ class Pet {
     const f = fg();
     if (this.physics.mode === 'held') return true; // never vanish from under your mouse mid-drag
     if (this.ctx.hiddenByUser()) return false;
+    if (this.coveredBySystem) return false;
     if (this.primary && state.onlyWhileWorking && !this.ctx.busy()) return false;
     if (!state.onlyInClaude || !f.available) return true;
     const c = f.claude;
@@ -160,6 +167,32 @@ class Pet {
 
   refreshVisibility() {
     this.setVisible(this.wantVisible());
+  }
+
+  // Ask Windows what is really on top at his body's centre. Notification toasts,
+  // the Start menu and other shell surfaces sit above even always-on-top windows
+  // (and don't appear in normal window lists), so clicks meant for him would land
+  // on them. If one is there, he steps aside (fades out) until it's gone.
+  probeCover(foreground) {
+    if (!this.win || this.closing || this.physics.mode === 'held') return;
+    const [wx, wy] = this.position();
+    const hb = this.hitbox;
+    const point = { x: wx + (hb.x0 + hb.x1) / 2, y: wy + (hb.y0 + hb.y1) / 2 };
+    foreground.probe(point, (owner, cls) => {
+      const covered = owner === 'other';
+      if (covered !== this.coveredBySystem) {
+        this.coveredBySystem = covered;
+        this.noteClick(covered ? `covered by ${cls}: stepping aside` : 'no longer covered');
+        this.refreshVisibility();
+      }
+      // Walk out from under it (toasts live in the bottom-right corner, so
+      // head left unless he's already at the left edge), then reappear.
+      if (covered && this.physics.mode === 'ground' && !this.physics.walk) {
+        const w = this.ctx.world();
+        const dir = this.center() - 320 > w.x0 + 40 ? -1 : 1;
+        this.physics.walkTo(wx + dir * 320, 90);
+      }
+    });
   }
 
   // ---------- clicks ----------
@@ -221,7 +254,44 @@ class Pet {
 
   // ---------- dragging ----------
 
+  // Windows reported a left-button press at p. If it's on him while he's
+  // taking clicks, his page should report it within half a second. If it
+  // doesn't, his window has got into a state where presses are lost (seen after
+  // long idle periods; nothing short of a new window fixes it), so swap one in.
+  osPress(p) {
+    if (!this.win || !this.shown || this.closing || this.interactive !== true) return;
+    const [wx, wy] = this.position();
+    const hb = this.hitbox;
+    if (p.x < wx + hb.x0 || p.x > wx + hb.x1 || p.y < wy + hb.y0 || p.y > wy + hb.y1) return;
+    clearTimeout(this.expectPress);
+    this.expectPress = setTimeout(() => {
+      this.expectPress = null;
+      this.noteClick('press on him never reached the page: new window');
+      this.ctx.log(`Clawd ${this.id}: lost a press; recreating his window`);
+      this.recreate();
+    }, 600);
+  }
+
+  // A fresh window in the same place, with his current outfit/activity/pose.
+  recreate() {
+    if (!this.win || this.closing) return;
+    const old = this.win;
+    const [x, y] = this.position();
+    this.ready = false;
+    this.pending = [];
+    this.interactive = null;
+    this.win = this.createWindow(x, y);
+    if (!this.shown) this.win.setOpacity(0);
+    for (const ch of ['outfit', 'posture', 'activity']) {
+      if (ch in this.lastState) this.pending.push([ch, this.lastState[ch]]);
+    }
+    old.removeAllListeners('closed');
+    old.destroy();
+  }
+
   dragStart() {
+    clearTimeout(this.expectPress);
+    this.expectPress = null;
     this.noteClick(`press (physics was ${this.physics.mode})`);
     if (!this.win) return;
     this.dragOrigin = { win: this.position(), cursor: screen.getCursorScreenPoint() };

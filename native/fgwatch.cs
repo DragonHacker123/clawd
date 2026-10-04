@@ -36,6 +36,8 @@ class FgWatch {
   [DllImport("user32.dll")] static extern int GetMessage(out MSG m, IntPtr h, uint min, uint max);
   [DllImport("user32.dll")] static extern bool GetCursorInfo(ref CURSORINFO ci);
   [DllImport("user32.dll")] static extern IntPtr LoadCursor(IntPtr inst, int id);
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
 
   delegate bool EnumProc(IntPtr h, IntPtr p);
   delegate IntPtr HookProc(int code, IntPtr w, IntPtr l);
@@ -188,6 +190,10 @@ class FgWatch {
       return CallNextHookEx(IntPtr.Zero, code, w, l);
     };
     mouseProc = (code, w, l) => {
+      if (code >= 0 && w.ToInt32() == 0x201) { // WM_LBUTTONDOWN: where (only), so Clawd can tell if a press on him got lost
+        int px = Marshal.ReadInt32(l, 0), py = Marshal.ReadInt32(l, 4);
+        ThreadPool.QueueUserWorkItem(_ => Emit("{\"down\":[" + px + "," + py + "]}"));
+      }
       if (code >= 0 && claudeInFront && w.ToInt32() == 0x201) { // WM_LBUTTONDOWN
         var ci = new CURSORINFO { cbSize = Marshal.SizeOf(typeof(CURSORINFO)) };
         if (GetCursorInfo(ref ci) && ci.hCursor == handCursor) Signal("link");
@@ -205,7 +211,26 @@ class FgWatch {
     try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch {} // per-monitor v2: physical pixels
     selfDir = args.Length > 0 ? args[0] : null;
     debug = args.Length > 1 && args[1] == "--debug";
-    new Thread(() => { try { Console.In.ReadToEnd(); } catch {} Environment.Exit(0); }) { IsBackground = true }.Start();
+    // stdin: "probe <id> <x> <y>" (physical px) -> {"probe":id,"owner":...}: who is
+    // really on top at that point (system shell surfaces like notification
+    // toasts sit above always-on-top windows and aren't in EnumWindows).
+    // EOF on stdin = Clawd quit.
+    new Thread(() => {
+      try {
+        string req;
+        while ((req = Console.In.ReadLine()) != null) {
+          var parts = req.Split(' ');
+          if (parts.Length != 4 || parts[0] != "probe") continue;
+          var pt = new POINT { X = int.Parse(parts[2]), Y = int.Parse(parts[3]) };
+          IntPtr h = GetAncestor(WindowFromPoint(pt), 2);
+          uint pid; GetWindowThreadProcessId(h, out pid);
+          string exe = ExeOf(pid);
+          string owner = IsSelf(exe) ? "self" : IsClaude(exe) ? "claude" : shellClasses.Contains(ClassOf(h)) ? "tray" : "other";
+          Emit("{\"probe\":" + int.Parse(parts[1]) + ",\"owner\":\"" + owner + "\",\"cls\":\"" + ClassOf(h).Replace("\"", "") + "\"}");
+        }
+      } catch {}
+      Environment.Exit(0);
+    }) { IsBackground = true }.Start();
     new Thread(HookThread) { IsBackground = true }.Start();
     string last = null;
     long lastCpuTicks = -1;

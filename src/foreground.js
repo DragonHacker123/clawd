@@ -26,12 +26,15 @@ class Foreground {
   // claude is { x, y, width, height, min } in DIPs (null when it's not running) and
   // above is the rects of ordinary windows stacked over Claude's window.
   // onInput('key' | 'link') when you type / click a link while Claude is in front.
-  constructor({ onChange, onInput, onAppCpu, log }) {
+  constructor({ onChange, onInput, onAppCpu, onMouseDown, log }) {
     this.onChange = onChange;
+    this.onMouseDown = onMouseDown || (() => {});
     this.onAppCpu = onAppCpu || (() => {});
     this.onInput = onInput || (() => {});
     this.log = log || (() => {});
     this.state = { fg: 'claude', claude: null, above: [], available: false };
+    this.probes = new Map();
+    this.probeId = 0;
     this.start();
   }
 
@@ -58,6 +61,17 @@ class Foreground {
       if (msg.error) return this.log(`foreground: ${msg.error}`);
       if (msg.input) return this.onInput(msg.input);
       if (Number.isFinite(msg.appCpu)) return this.onAppCpu(msg.appCpu);
+      if (Number.isFinite(msg.probe)) {
+        const cb = this.probes.get(msg.probe);
+        this.probes.delete(msg.probe);
+        if (cb) cb(msg.owner, msg.cls);
+        return;
+      }
+      if (Array.isArray(msg.down)) {
+        const [x, y] = msg.down;
+        const p = process.platform === 'win32' ? screen.screenToDipPoint({ x, y }) : { x, y };
+        return this.onMouseDown(p);
+      }
       const toDip = (r) => (process.platform === 'win32' ? screen.screenToDipRect(null, r) : r);
       let claude = null;
       if (msg.claude) {
@@ -67,6 +81,17 @@ class Foreground {
       this.state = { fg: msg.fg, claude, above, available: true };
       this.onChange(this.state);
     });
+  }
+
+  // Who is really on top at this DIP point? cb('self'|'claude'|'tray'|'other', windowClass)
+  probe(point, cb) {
+    if (!this.child || !this.state.available || !this.child.stdin.writable) return;
+    const id = ++this.probeId;
+    const p = process.platform === 'win32' ? screen.dipToScreenPoint(point) : point;
+    this.probes.set(id, cb);
+    setTimeout(() => this.probes.delete(id), 2000);
+    this.child.stdin.write(`probe ${id} ${Math.round(p.x)} ${Math.round(p.y)}
+`);
   }
 
   stop() {

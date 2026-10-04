@@ -338,7 +338,29 @@ app.whenReady().then(() => {
     pos: p.position(), mode: p.physics.mode, activity: p.physics.activity, anim: p.lastAnim,
     ground: p.physics.ground && { y: Math.round(p.physics.ground.y), kind: p.physics.ground.kind, on: p.physics.ground.pet ? p.physics.ground.pet.id : undefined },
   }));
-  startServer(brain, { snap, input, surfacesDebug, settleNow, dropAt, physicsState, clicks, forceInteractive, pets })
+  // Investigating "clicks stop reaching the page after a long idle": what the
+  // page thinks, and candidate repairs to try on a live broken window.
+  const pageState = async () => {
+    const p = lead();
+    const page = await p.win.webContents.executeJavaScript(
+      '({ visibility: document.visibilityState, focus: document.hasFocus(), pointerLocked: !!document.pointerLockElement })',
+    );
+    return { page, focused: p.win.isFocused(), visible: p.win.isVisible(), opacity: p.win.getOpacity(), alwaysOnTop: p.win.isAlwaysOnTop() };
+  };
+  const heal = async (method) => {
+    const w = lead().win;
+    if (method === 'reassert') { w.setIgnoreMouseEvents(true); w.setIgnoreMouseEvents(false); }
+    else if (method === 'focusable') { w.setFocusable(true); w.setFocusable(false); }
+    else if (method === 'showInactive') w.showInactive();
+    else if (method === 'ontop') { w.setAlwaysOnTop(false); w.setAlwaysOnTop(true, 'screen-saver'); }
+    else if (method === 'invalidate') w.webContents.invalidate();
+    else if (method === 'reload') w.webContents.reload();
+    else if (method === 'recreate') lead().recreate();
+    else return { ok: false };
+    lead().interactive = null;
+    return { ok: true };
+  };
+  startServer(brain, { snap, input, surfacesDebug, settleNow, dropAt, physicsState, clicks, forceInteractive, pets, pageState, heal })
     .catch((err) => console.error('event server failed', err));
 
   foreground = new Foreground({
@@ -351,10 +373,12 @@ app.whenReady().then(() => {
       flock.broadcast('wake', kind);
     },
     onAppCpu,
+    onMouseDown: (p) => { for (const pet of flock.pets) pet.osPress(p); },
     log,
   });
   setInterval(refreshVisibility, 500);
   setInterval(() => { for (const p of flock.pets) p.hitTest(); }, 30);
+  setInterval(() => { for (const p of flock.pets) p.probeCover(foreground); }, 800);
 
   screen.on('display-removed', () => {
     for (const p of flock.pets) {

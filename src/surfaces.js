@@ -264,17 +264,17 @@ class Surfaces {
     // the far side of a box, not the thing he's standing on.
     const sameWay = (l) => !prev || !Number.isFinite(prev.sig) || Math.sign(l.sig) === Math.sign(prev.sig);
     const under = (l) => (l.x0 <= c || l.hiddenLeft) && (c <= l.x1 || l.hiddenRight);
+    // His own ledge, still where it was: any line within 3 px counts, whatever
+    // its colour direction (thin borders flicker between their two edges).
+    const near = (l) => Math.abs(l.y - feet.y) <= 3;
+    const here = all.filter((l) => under(l) && near(l)).sort((a, b) => Math.abs(a.y - feet.y) - Math.abs(b.y - feet.y))[0];
     const lines = all
-      .filter((l) => under(l) && sameWay(l))
+      .filter((l) => under(l) && !near(l) && sameWay(l))
       .sort((a, b) => score(a) - score(b));
     if (process.env.CLAWD_TRACE) this.log(`track feet=${feet.y.toFixed(0)} c=${c.toFixed(0)} rect=${JSON.stringify(rect)} all=${JSON.stringify(all.map((l) => [Math.round(l.y), Math.round(l.x0), Math.round(l.x1), Math.round(l.sig)]))}`);
     // Ends that touch the scan strip's sides are unknown (the line runs on).
-    const line = lines[0] ? {
-      ...lines[0],
-      openLeft: lines[0].x0 <= rect.x0 + 1,
-      openRight: lines[0].x1 >= rect.x1 - 1,
-    } : null;
-    return { line, ok: true };
+    const withEnds = (l) => l && { ...l, openLeft: l.x0 <= rect.x0 + 1, openRight: l.x1 >= rect.x1 - 1 };
+    return { here: withEnds(here), other: withEnds(lines[0]), ok: true };
   }
 
   // Is there still something under his feet right now?

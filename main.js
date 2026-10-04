@@ -176,19 +176,27 @@ async function trackTick() {
   if (!g || g.kind === 'floor' || g.kind === 'taskbar') return;
   surfaces.busy = true;
   try {
-    const { line, ok } = await surfaces.track(win.getBounds(), physics.ground);
+    const { here, other, ok } = await surfaces.track(win.getBounds(), physics.ground);
     if (!ok || physics.mode !== 'ground') return;
-    if (!line) {
-      unsupportedChecks += 1;
-      trackDelay = 60; // look again quickly before deciding it's gone
-      if (unsupportedChecks >= 3) {
-        unsupportedChecks = 0;
-        physics.fallFromRest();
-      }
-      return;
+    if (here) {
+      // Still on his ledge (maybe nudged a pixel or two).
+      unsupportedChecks = 0;
+      return physics.rideTo(here);
     }
-    unsupportedChecks = 0;
-    return physics.rideTo(line);
+    // His ledge isn't where it was. One glitchy frame mustn't make him jump,
+    // so only act when it's missing on two looks running: then follow it to
+    // where it moved (or onto the ledge that took its place), or fall.
+    unsupportedChecks += 1;
+    trackDelay = 60; // look again quickly
+    if (unsupportedChecks < 2) return;
+    if (other) {
+      unsupportedChecks = 0;
+      return physics.rideTo(other);
+    }
+    if (unsupportedChecks >= 3) {
+      unsupportedChecks = 0;
+      physics.fallFromRest();
+    }
   } catch (err) {
     console.error('ledge tracking failed', err);
   } finally {

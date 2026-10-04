@@ -208,7 +208,27 @@ class FgWatch {
     new Thread(() => { try { Console.In.ReadToEnd(); } catch {} Environment.Exit(0); }) { IsBackground = true }.Start();
     new Thread(HookThread) { IsBackground = true }.Start();
     string last = null;
+    long lastCpuTicks = -1;
+    DateTime lastCpuAt = DateTime.UtcNow;
+    int loops = 0;
     while (true) {
+      // Every ~2 s: how busy is the Claude desktop app (all its processes)?
+      if (loops++ % 13 == 0) {
+        try {
+          long ticks = 0;
+          foreach (var p in System.Diagnostics.Process.GetProcessesByName("claude")) {
+            try { if (IsClaude(ExeOf((uint)p.Id))) ticks += p.TotalProcessorTime.Ticks; } catch {}
+            p.Dispose();
+          }
+          var now = DateTime.UtcNow;
+          if (lastCpuTicks >= 0) {
+            double pct = (ticks - lastCpuTicks) / (double)(now - lastCpuAt).Ticks * 100.0;
+            Emit("{\"appCpu\":" + Math.Max(0, Math.Round(pct, 1)).ToString(System.Globalization.CultureInfo.InvariantCulture) + "}");
+          }
+          lastCpuTicks = ticks;
+          lastCpuAt = now;
+        } catch {}
+      }
       string line;
       try {
         string kind = Kind(GetForegroundWindow());

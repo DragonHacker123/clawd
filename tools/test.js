@@ -89,7 +89,7 @@ test('focus stays on the session you typed into', () => {
   ev('b', 'UserPromptSubmit', { prompt: 'second session about something else' });
   ev('a', 'PreToolUse', { tool_name: 'Edit' });
   assert.equal(brain.focusId, 'b');
-  assert.equal(last('activity'), 'juggling'); // b thinking while a also busy
+  assert.equal(last('activity'), 'thinking'); // b thinking; a gets its own Clawd
   ev('b', 'Stop');
   assert.equal(brain.focusId, 'a');
   assert.equal(last('activity'), 'typing');

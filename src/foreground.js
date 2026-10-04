@@ -26,8 +26,9 @@ class Foreground {
   // claude is { x, y, width, height, min } in DIPs (null when it's not running) and
   // above is the rects of ordinary windows stacked over Claude's window.
   // onInput('key' | 'link') when you type / click a link while Claude is in front.
-  constructor({ onChange, onInput, log }) {
+  constructor({ onChange, onInput, onAppCpu, log }) {
     this.onChange = onChange;
+    this.onAppCpu = onAppCpu || (() => {});
     this.onInput = onInput || (() => {});
     this.log = log || (() => {});
     this.state = { fg: 'claude', claude: null, above: [], available: false };
@@ -56,6 +57,7 @@ class Foreground {
       }
       if (msg.error) return this.log(`foreground: ${msg.error}`);
       if (msg.input) return this.onInput(msg.input);
+      if (Number.isFinite(msg.appCpu)) return this.onAppCpu(msg.appCpu);
       const toDip = (r) => (process.platform === 'win32' ? screen.screenToDipRect(null, r) : r);
       let claude = null;
       if (msg.claude) {

@@ -21,7 +21,8 @@ const HEAD_TOP = 75; // px from the window top to the top of his head
 const HALF_FEET = (FEET_R - FEET_L) / 2;
 
 class Physics {
-  constructor({ getWindow, surfaces, send, settings, world, onRest, log }) {
+  constructor({ getWindow, surfaces, send, settings, world, onRest, log, heads }) {
+    this.heads = heads || (() => []); // other Clawds' heads: ledges he can land on
     this.getWindow = getWindow;
     this.surfaces = surfaces;
     this.send = send;
@@ -47,6 +48,11 @@ class Physics {
     this.timer = null;
     this.last = 0;
     this.wanderTimer = setInterval(() => this.maybeWander(), 2500);
+  }
+
+  dispose() {
+    clearInterval(this.wanderTimer);
+    this.loop(false);
   }
 
   // ---------- helpers ----------
@@ -217,7 +223,8 @@ class Physics {
     if (this.vy > 0) {
       // Never fall through the floor, even before the scan arrives.
       const floor = w.floor;
-      const candidates = this.lines ? this.lines : [floor];
+      // Screen ledges (scanned at launch) plus other Clawds' heads (live).
+      const candidates = [...(this.lines ? this.lines : [floor]), ...this.heads()];
       const from = Math.min(this.checkedFeetY, prevFeet);
       const c = this.center();
       // Skip the ledge he was just knocked off (it's moving up past him).
@@ -307,7 +314,8 @@ class Physics {
   canWander() {
     const s = this.settings();
     return this.mode === 'ground' && !this.walk && s.gravity && !this.sitting
-      && (this.activity === null || this.activity === 'fetching' || this.activity === 'sweeping')
+      && !(this.ground && this.ground.kind === 'pet') // standing on a friend's head: stay put
+      && (this.activity === null || this.activity === 'chatting' || this.activity === 'fetching' || this.activity === 'sweeping')
       && Date.now() - this.lastStimulus < 18 * 1000; // not while he's dozing/asleep
   }
 
@@ -346,6 +354,23 @@ class Physics {
     this.place();
   }
 
+  // Walk toward a window x (for joining friends), staying on his ledge.
+  walkTo(targetX, speed = WALK_SPEED) {
+    if (this.mode !== 'ground' || this.walk || !this.ground || this.sitting || !this.sync()) return false;
+    if (this.ground.kind === 'pet') return false;
+    const line = this.ground;
+    const w = this.world();
+    const lo = Math.max(line.x0, w.x0) + HALF_FEET + 4 - CENTER;
+    const hi = Math.min(line.x1, w.x1) - HALF_FEET - 4 - CENTER;
+    const x = Math.max(lo, Math.min(hi, targetX));
+    if (!Number.isFinite(x) || Math.abs(x - this.x) < 6) return false;
+    const dir = x > this.x ? 1 : -1;
+    this.walk = { dir, targetX: x, speed };
+    this.motion('walk', { dir });
+    this.loop(true);
+    return true;
+  }
+
   stopWalking() {
     if (!this.walk) return;
     this.walk = null;
@@ -358,7 +383,7 @@ class Physics {
   setActivity(activity) {
     this.activity = activity;
     this.stimulus();
-    if (this.walk && !(activity === null || activity === 'fetching' || activity === 'sweeping')) this.stopWalking();
+    if (this.walk && !(activity === null || activity === 'chatting' || activity === 'fetching' || activity === 'sweeping')) this.stopWalking();
   }
 
   setSitting(sitting) {

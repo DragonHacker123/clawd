@@ -35,6 +35,9 @@
     confused: 'clawd-react-double',
     surprised: 'clawd-mini-alert',
     sleepy: 'clawd-idle-yawn',
+    // turning to a friend (other Clawds)
+    lookLeft: 'clawd-react-left',
+    lookRight: 'clawd-react-right',
   };
 
   // [animation, weight, how long to hold it (ms)]
@@ -99,6 +102,11 @@
       if (activity === 'fetching') return ACTIVITY.fetching;
       if (activity === 'sweeping') return ACTIVITY.sweeping;
       return 'clawd-walk';
+    }
+    // Chat is working on something: awake, doing his normal idle routine in costume.
+    if (activity === 'chatting') {
+      lastStimulus = t;
+      return pickIdle(t);
     }
     if (activity) return ACTIVITY[activity] || ACTIVITY.thinking;
     const quiet = t - lastStimulus;

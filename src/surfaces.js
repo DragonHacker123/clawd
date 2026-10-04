@@ -27,12 +27,22 @@ function feetOf(bounds) {
   return { y: bounds.y + FEET_Y, l: bounds.x + FEET_L, r: bounds.x + FEET_R };
 }
 
-async function capture(win, display) {
+// A capture costs ~280 ms whatever its size, so several Clawds share one:
+// anything asked for within 150 ms of the last grab of that display reuses it.
+const recent = new Map(); // display id -> { at, promise }
+
+function capture(win, display) {
+  const hit = recent.get(display.id);
+  if (hit && Date.now() - hit.at < 150) return hit.promise;
   const sf = display.scaleFactor;
   const thumbnailSize = { width: Math.round(display.size.width * sf), height: Math.round(display.size.height * sf) };
-  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize });
-  const src = sources.find((s) => s.display_id === String(display.id)) || sources[0];
-  return src ? src.thumbnail : null;
+  const promise = desktopCapturer.getSources({ types: ['screen'], thumbnailSize }).then((sources) => {
+    const src = sources.find((s) => s.display_id === String(display.id)) || sources[0];
+    return src ? src.thumbnail : null;
+  });
+  recent.set(display.id, { at: Date.now(), promise });
+  promise.then(() => recent.set(display.id, { at: Date.now(), promise }), () => recent.delete(display.id));
+  return promise;
 }
 
 // Scan a DIP rectangle of the captured display for horizontal lines.
@@ -60,13 +70,15 @@ function findLines(img, display, rect, mask) {
 
   const minRun = MIN_LINE * sf;
   const minReal = 20 * sf;
-  const m = mask && {
-    x0: px(mask.x0 - display.bounds.x) - region.x, x1: px(mask.x1 - display.bounds.x) - region.x,
-    y0: px(mask.y0 - display.bounds.y) - region.y, y1: px(mask.y1 - display.bounds.y) - region.y,
-  };
+  // One mask per Clawd on screen.
+  const masks = (Array.isArray(mask) ? mask : mask ? [mask] : []).map((mk) => ({
+    x0: px(mk.x0 - display.bounds.x) - region.x, x1: px(mk.x1 - display.bounds.x) - region.x,
+    y0: px(mk.y0 - display.bounds.y) - region.y, y1: px(mk.y1 - display.bounds.y) - region.y,
+  }));
   const lines = [];
   for (let row = 1; row < h; row++) {
-    const maskedRow = m && row >= m.y0 && row - 1 <= m.y1;
+    const rowMasks = masks.filter((mk) => row >= mk.y0 && row - 1 <= mk.y1);
+    const maskedRow = rowMasks.length > 0;
     // Track each run's hits and step statistics: a real UI edge is almost
     // unbroken and has the same brightness step all along (same two colours);
     // a word's baseline is gappy and its steps vary letter to letter.
@@ -105,7 +117,7 @@ function findLines(img, display, rect, mask) {
       hits = sum = sumAbs = sumSq = masked = 0;
     };
     for (let x = 0; x < w; x++) {
-      if (maskedRow && x >= m.x0 && x <= m.x1) {
+      if (maskedRow && rowMasks.some((mk) => x >= mk.x0 && x <= mk.x1)) {
         if (start < 0) start = x;
         lastHit = x;
         masked++;

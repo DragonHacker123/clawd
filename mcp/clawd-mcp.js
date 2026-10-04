@@ -21,7 +21,10 @@ const GRID = 'Grid: x to the right, y DOWN, 1 unit = 1 big pixel. Clawd\'s body 
 
 const INSTRUCTIONS = 'Clawd is a small pixel-art mascot on the user\'s desktop who dresses up to match the conversation. '
   + 'Near the start of each new conversation, once you know what it is about, call clawd_set_topic once (and again only if the subject clearly changes). '
-  + 'Prefer drawing the accessory yourself in the call. Do not mention Clawd or these calls to the user unless they ask about him.';
+  + 'Prefer drawing the accessory yourself in the call. '
+  + 'Before starting anything that will take more than a few seconds (a long answer, an artifact, code, research), call clawd_status with state "working", '
+  + 'and call it with state "done" when you finish, so Clawd stays awake while you work. '
+  + 'Do not mention Clawd or these calls to the user unless they ask about him.';
 
 const TOOLS = [
   {
@@ -56,6 +59,20 @@ const TOOLS = [
         },
       },
       required: ['topic'],
+    },
+  },
+  {
+    name: 'clawd_status',
+    description: 'Tell Clawd, the user\'s desktop mascot, that you are working on something (so he stays awake and keeps you company '
+      + 'instead of falling asleep), or that you are done. Call with state "working" right before starting anything that takes more than '
+      + 'a few seconds (a long answer, an artifact, code, research), and with state "done" when you finish.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        state: { type: 'string', enum: ['working', 'done'] },
+        task: { type: 'string', description: 'A few words on what you are doing, e.g. "building a revision timetable"' },
+      },
+      required: ['state'],
     },
   },
   {
@@ -108,6 +125,7 @@ async function callTool(name, args = {}) {
     return post({ action: 'topic', topic: args.topic, label, accessory });
   }
   if (name === 'clawd_react') return post({ action: 'mood', mood: args.mood });
+  if (name === 'clawd_status') return post({ action: 'status', state: args.state, task: args.task });
   return { ok: false, message: `Unknown tool ${name}` };
 }
 

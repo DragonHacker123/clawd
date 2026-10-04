@@ -7,7 +7,8 @@ const { sanitizeOutfit } = require('./outfits');
 
 const STALE_MS = 10 * 60 * 1000;
 const MIN_TOPIC_PROMPT = 15;
-const CHAT_BUSY_MS = 20 * 1000;
+const CHAT_BUSY_MS = 2 * 60 * 1000; // after a topic/mood call
+const CHAT_WORK_MS = 10 * 60 * 1000; // after "working", unless "done" comes first
 const LONG_TASK_MS = 90 * 1000; // busy this long on one prompt: he sits down
 const MOODS = ['happy', 'celebrate', 'excited', 'thinking', 'confused', 'surprised', 'sleepy'];
 
@@ -167,22 +168,28 @@ class Brain {
   }
 
   chatEvent(body = {}) {
-    // A chat tool call means you're talking to Claude in chat right now, so
-    // chat takes focus; it counts as "busy" for a short while, then Clawd
-    // drifts back to any busy Code session.
+    // A chat tool call means Claude chat is working on something for you, so
+    // chat takes focus and counts as busy ("chatting": he does his normal idle
+    // animations in costume and doesn't fall asleep) until it says it's done,
+    // or for a while after a topic/mood call.
     const chat = this.session('chat', '');
-    chat.lastEvent = Date.now();
-    chat.lastPrompt = Date.now();
+    const t = Date.now();
+    chat.lastEvent = t;
+    chat.lastPrompt = t;
+    if (!chat.busy) chat.busySince = t;
     chat.busy = true;
-    chat.activity = 'thinking';
+    chat.activity = 'chatting';
     this.focusId = 'chat';
-    clearTimeout(this.chatTimer);
-    this.chatTimer = setTimeout(() => {
-      chat.busy = false;
-      chat.activity = null;
-      this.refocus();
+    const done = body.action === 'status' && body.state === 'done';
+    this.chatBusyFor(done ? 0 : body.action === 'status' ? CHAT_WORK_MS : CHAT_BUSY_MS);
+    if (done) {
+      this.send('flash', { state: 'happy', ms: 2600 });
+      return { ok: true, message: 'Clawd knows you are done.' };
+    }
+    if (body.action === 'status') {
       this.publish();
-    }, CHAT_BUSY_MS);
+      return { ok: true, message: 'Clawd will stay awake while you work.' };
+    }
     this.publish();
 
     if (body.action === 'mood') {
@@ -223,6 +230,27 @@ class Brain {
     return best;
   }
 
+  chatBusyFor(ms) {
+    const chat = this.sessions.get('chat');
+    clearTimeout(this.chatTimer);
+    const end = () => {
+      if (!chat) return;
+      chat.busy = false;
+      chat.activity = null;
+      this.refocus();
+      this.publish();
+    };
+    if (ms <= 0) end();
+    else this.chatTimer = setTimeout(end, ms);
+  }
+
+  // Everything happening right now (busy, not a background task), most recent first.
+  activeSessions() {
+    return [...this.sessions.values()]
+      .filter((s) => s.busy && !s.background)
+      .sort((a, b) => b.lastPrompt - a.lastPrompt);
+  }
+
   clearOutfit() {
     for (const s of this.sessions.values()) s.outfit = null;
     this.publish();
@@ -253,7 +281,6 @@ class Brain {
     const focus = this.sessions.get(this.focusId);
     let activity = focus && focus.busy ? focus.activity : null;
     const busyCount = [...this.sessions.values()].filter((s) => s.busy && !s.background).length;
-    if (activity === 'thinking' && busyCount > 1) activity = 'juggling';
     if (activity !== this.shown.activity) {
       this.shown.activity = activity;
       this.send('activity', activity);

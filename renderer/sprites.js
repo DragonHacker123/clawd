@@ -160,6 +160,12 @@
       svg.insertBefore(g, el);
       g.appendChild(el);
     }
+    // His body rests on the ground now, so a shadow under him would make him
+    // look like he's hovering above the ledge.
+    for (const r of svg.querySelectorAll('rect')) {
+      const f = fillOf(r, svg);
+      if (num(r, 'y') >= 15 && /^#0{3}(0{3})?$/i.test(f)) r.setAttribute('visibility', 'hidden');
+    }
     const feet = document.createElementNS(SVG_NS, 'g');
     feet.setAttribute('fill', '#DE886D');
     feet.innerHTML = '<rect x="0.5" y="14" width="1.5" height="1"/><rect x="13" y="14" width="1.5" height="1"/>';

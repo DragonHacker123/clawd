@@ -111,6 +111,7 @@ he runs instead of walking, hops around (and up onto higher ledges), and dashes 
 up them before leaping off. He backflips, and sometimes wall-flips as he kicks off a wall. A pulsing
 blue-purple glow and pixel sparkles surround him: the sparkles stream behind him when he runs and
 burst when he lands a stunt. He never sits down in this mode, but he still falls asleep if nothing is
-happening and you're away. Hook events don't say whether ultracode is on, so Clawd reads the
-session's transcript. Claude Code writes an `ultra_effort_enter` / `ultra_effort_exit` marker there
-when you switch it, and Clawd reads only what's new each time.
+happening and you're away. Hook events don't say which effort a session runs at, so Clawd reads
+the session's transcript, where each of Claude's replies is stamped with its effort. The desktop
+app's "Ultracode" is effort `xhigh`. It also honours the CLI's `ultra_effort_enter` / `ultra_effort_exit`
+markers. Each time, it reads only what's new.

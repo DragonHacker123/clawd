@@ -51,20 +51,25 @@ function toolActivity(name = '', input = {}) {
 }
 
 // ---------- ultracode ----------
-// Claude Code doesn't put the effort mode in hook events, but switching
-// ultracode on or off writes a marker into the session's transcript (whose
-// path every hook event carries). The last marker wins.
-const ULTRA_ON = '"attachment":{"type":"ultra_effort_enter"';
-const ULTRA_OFF = '"attachment":{"type":"ultra_effort_exit"';
+// Hook events don't say which effort a session runs at, but its transcript
+// (whose path every hook event carries) does: each of Claude's replies is
+// stamped with that turn's effort, and the desktop app's "Ultracode" is effort
+// xhigh. Switching the ultracode setting in the CLI also leaves an
+// ultra_effort_enter / ultra_effort_exit marker. Whichever comes last wins.
+// (Quotes inside messages are escaped in the transcript, so talking about
+// these strings never matches.)
+const ULTRA_EFFORTS = new Set(['xhigh']);
+const ULTRA_SIGNS = /"perTurnEffort":"([a-z]+)"|"attachment":\{"type":"ultra_effort_(enter|exit)"/g;
 const CHUNK = 1024 * 1024;
 const MAX_BACK = 64 * CHUNK; // give up looking further back than this
 
-// true (on), false (off) or null (no marker in this text).
+// true (on), false (off) or null (nothing about it in this text).
 function ultraFromText(text) {
-  const on = text.lastIndexOf(ULTRA_ON);
-  const off = text.lastIndexOf(ULTRA_OFF);
-  if (on < 0 && off < 0) return null;
-  return on > off;
+  let last = null;
+  for (const m of text.matchAll(ULTRA_SIGNS)) last = m;
+  if (!last) return null;
+  if (last[2]) return last[2] === 'enter';
+  return ULTRA_EFFORTS.has(last[1]);
 }
 
 async function readSlice(fh, start, end) {
@@ -99,7 +104,11 @@ class Brain {
   constructor({ send, outfits, settings, onBusyChange, onPosture = () => {} }) {
     this.onPosture = onPosture;
     this.sitting = false;
-    setInterval(() => this.publish(), 5000).unref?.();
+    setInterval(() => {
+      // A turn can run a long time without tool calls: keep checking its effort.
+      for (const s of this.sessions.values()) if (s.busy && !s.background) this.checkUltra(s);
+      this.publish();
+    }, 5000).unref?.();
     this.send = send;
     this.outfits = outfits;
     this.settings = settings;

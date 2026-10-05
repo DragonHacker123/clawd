@@ -237,7 +237,7 @@ class FgWatch {
           IntPtr h = GetAncestor(WindowFromPoint(pt), 2);
           uint pid; GetWindowThreadProcessId(h, out pid);
           string exe = ExeOf(pid);
-          string owner = IsSelf(exe) ? "self" : IsClaude(exe) ? "claude" : shellClasses.Contains(ClassOf(h)) ? "tray" : "other";
+          string owner = h == IntPtr.Zero ? "none" : IsSelf(exe) ? "self" : IsClaude(exe) ? "claude" : shellClasses.Contains(ClassOf(h)) ? "tray" : "other";
           Emit("{\"probe\":" + int.Parse(parts[1]) + ",\"owner\":\"" + owner + "\",\"cls\":\"" + ClassOf(h).Replace("\"", "") + "\"}");
         }
       } catch {}

@@ -77,6 +77,9 @@ class Pet {
     };
     win.setAlwaysOnTop(true, 'screen-saver');
     win.setIgnoreMouseEvents(true);
+    // Chromium remembers zoom per page across runs, so a size used before can
+    // stick; set this run's size on every load.
+    win.webContents.on('did-finish-load', () => win.webContents.setZoomFactor(S));
     win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
     win.webContents.on('console-message', (_e, level, message, line, source) => {
       if (level >= 2) this.ctx.log(`renderer ${this.id}: ${message} (${path.basename(source || '')}:${line})`);
@@ -237,7 +240,8 @@ class Pet {
   setHitbox(box) {
     // The page reports CSS px on its 150 px canvas; the window is S times that.
     if (box && [box.x0, box.y0, box.x1, box.y1].every(Number.isFinite)) {
-      this.hitbox = { x0: box.x0 * S, y0: box.y0 * S, x1: box.x1 * S, y1: box.y1 * S };
+      const c = (v) => Math.max(0, Math.min(SIZE, v * S));
+      this.hitbox = { x0: c(box.x0), y0: c(box.y0), x1: c(box.x1), y1: c(box.y1) };
     }
   }
 

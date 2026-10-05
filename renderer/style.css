@@ -91,3 +91,26 @@ body.dragging #stage {
 /* Ultracode: running up the side walls, feet on the wall. */
 #stage.climb-left { transform: rotate(90deg); }
 #stage.climb-right { transform: rotate(-90deg); }
+
+/* Ultracode: sparkles (particles.js) and a pulsing blue-purple glow. */
+#fx {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1;
+}
+
+#bubble {
+    z-index: 2;
+}
+
+body.hyper #stage .pet-svg {
+    animation: hyper-glow 1.4s infinite ease-in-out;
+}
+
+@keyframes hyper-glow {
+    0%, 100% { filter: drop-shadow(0 0 2px rgba(130, 100, 255, 0.95)) drop-shadow(0 0 6px rgba(90, 140, 255, 0.55)); }
+    50% { filter: drop-shadow(0 0 3px rgba(150, 110, 255, 1)) drop-shadow(0 0 10px rgba(100, 130, 255, 0.8)); }
+}

@@ -376,6 +376,7 @@ app.whenReady().then(() => {
       mode: ph.mode, x: ph.x, y: ph.y, vx: ph.vx, vy: ph.vy, walk: ph.walk,
       ground: ph.ground && { ...ph.ground, pet: ph.ground.pet ? ph.ground.pet.id : undefined },
       sitting: ph.sitting, activity: ph.activity, visible: p.shown, fg: fgState, world: world(),
+      hyper: ph.hyper, flipping: Date.now() < ph.flipUntil,
       hitbox: p.hitbox, interactive: p.interactive, cursor: screen.getCursorScreenPoint(),
     };
   };

@@ -64,6 +64,8 @@ class Physics {
     this.last = 0;
     this.wanderTimer = setInterval(() => this.maybeWander(), 2500);
     this.hyper = false;
+    this.facing = 1; // 1 right, -1 left: the way he last walked
+    this.flipUntil = 0;
     this.climb = null; // { side: -1 left wall | 1 right wall, topY }
     this.hyperTimer = setInterval(() => this.hyperTick(), HYPER_TICK_MS);
   }
@@ -111,6 +113,7 @@ class Physics {
   }
 
   motion(mode, extra = {}) {
+    if (mode === 'walk' && extra.dir) this.facing = extra.dir;
     this.send('motion', { mode, ...extra });
   }
 
@@ -167,7 +170,7 @@ class Physics {
   // Start flying from where he is now. Collision lines arrive asynchronously
   // (a screen capture); until then he flies and crossings are checked once
   // they're in, from the height where the flight started.
-  launch(vx, vy, cause, { ledgeGrab = false, ignoreY = null } = {}) {
+  launch(vx, vy, cause, { ledgeGrab = false, ignoreY = null, flipMs = 0 } = {}) {
     this.ignoreY = ignoreY;
     this.mode = 'air';
     this.climb = null;
@@ -178,7 +181,10 @@ class Physics {
     this.lines = null;
     this.checkedFeetY = this.feetY();
     this.startFeetY = this.feetY();
-    this.motion('air', { hop: cause === 'hop' });
+    // A flip turns him the way he's travelling (backwards, for a backflip).
+    const flip = flipMs ? { deg: vx < 0 ? -360 : 360, ms: Math.round(flipMs) } : null;
+    this.flipUntil = flip ? Date.now() + flip.ms : 0;
+    this.motion('air', { hop: cause === 'hop', flip, face: this.facing });
     this.loop(true);
     const w = this.world();
     // Jumping up: look for ledges as high as he'll get, so he can land on them.
@@ -435,12 +441,13 @@ class Physics {
     const wallL = line.x0 <= w.x0 + 2;
     const wallR = line.x1 >= w.x1 - 2;
     const roll = Math.random();
-    if (roll < 0.15) return; // a split-second breather
-    if (roll < 0.35 && (wallL || wallR)) {
+    if (roll < 0.12) return; // a split-second breather
+    if (roll < 0.3) return this.backflip();
+    if (roll < 0.45 && (wallL || wallR)) {
       const side = wallL && wallR ? (this.center() < (w.x0 + w.x1) / 2 ? -1 : 1) : wallL ? -1 : 1;
       return this.runTo(side < 0 ? lo : hi, side);
     }
-    if (roll < 0.6 || hi - lo < 40 * S) return this.hop();
+    if (roll < 0.65 || hi - lo < 40 * S) return this.hop();
     let target = lo + Math.random() * (hi - lo);
     if (Math.abs(target - this.x) < 80 * S) target = this.x + (target >= this.x ? 1 : -1) * 160 * S;
     this.runTo(Math.max(lo, Math.min(hi, target)), 0);
@@ -466,6 +473,16 @@ class Physics {
     this.ground = null;
     this.walk = null;
     this.launch(vx, vy, 'hop');
+  }
+
+  // Straight up, a full turn backwards, and down about where he started.
+  backflip() {
+    const f = this.facing || 1;
+    const vy = -(1000 + Math.random() * 200) * Math.sqrt(S); // 190-280 px high at full size
+    const vx = -f * (40 + Math.random() * 60) * S; // drifting back a little
+    this.ground = null;
+    this.walk = null;
+    this.launch(vx, vy, 'hop', { flipMs: ((2 * -vy) / G) * 1000 * 0.85 });
   }
 
   // Turned 90°, feet on the wall, running up it.
@@ -498,7 +515,17 @@ class Physics {
     const w = this.world();
     this.x = side < 0 ? w.x0 - FEET_L + 2 : w.x1 - FEET_R - 2;
     this.place();
-    this.launch(-side * (300 + Math.random() * 350) * S, -(250 + Math.random() * 350) * Math.sqrt(S), 'hop');
+    const vx = -side * (300 + Math.random() * 350) * S;
+    const vy = -(250 + Math.random() * 350) * Math.sqrt(S);
+    // Half the time it's a wall-flip: facing the wall, over backwards and away.
+    // Spin for about as long as the fall to the floor takes.
+    let flipMs = 0;
+    if (Math.random() < 0.5) {
+      this.facing = side;
+      const h = Math.max(0, w.floor.y - this.feetY());
+      flipMs = Math.min(1200, Math.max(450, ((-vy + Math.sqrt(vy * vy + 2 * G * h)) / G) * 1000 * 0.85));
+    }
+    this.launch(vx, vy, 'hop', { flipMs });
   }
 
   // ---------- outside events ----------

@@ -67,6 +67,7 @@
   let motion = { mode: 'ground', dir: 1 };
   let sitting = false;
   let hyper = false; // ultracode: running, hopping, climbing walls
+  let spin = null; // the flip animation, while he's doing one
 
   function now() {
     return Date.now();
@@ -137,7 +138,7 @@
     const acc = accessories();
     // Up a wall he faces up it: turned 90° with his feet on the wall.
     const climb = motion.mode === 'climb' ? motion.side : 0;
-    const flip = climb ? climb < 0 : motion.mode === 'walk' && motion.dir < 0;
+    const flip = climb ? climb < 0 : motion.mode === 'walk' ? motion.dir < 0 : motion.mode === 'air' && motion.face < 0;
     const fast = climb ? 2 : motion.mode === 'walk' && motion.run ? 2.6 : 1;
     // Long tasks: he sits down to work.
     const sit = sitting && motion.mode === 'ground' && WORKING.has(anim);
@@ -148,7 +149,7 @@
       stage.classList.toggle('climb-left', climb < 0);
       stage.classList.toggle('climb-right', climb > 0);
       // Running: legs and bob at double speed.
-      for (const a of document.getAnimations()) a.playbackRate = fast;
+      for (const a of document.getAnimations()) if (a !== spin) a.playbackRate = fast;
     }
   }
 
@@ -185,7 +186,24 @@
   // walk (dir -1/1), ground. A bad landing makes him cross.
   api.onMotion((m) => {
     const wasAirborne = motion.mode === 'air';
+    const wasHop = wasAirborne && motion.hop;
     motion = m;
+    window.ClawdParticles.setMotion(m);
+    if (m.mode === 'climb' || (m.mode === 'air' && m.flip)) window.ClawdParticles.burst(10);
+    if (m.mode === 'ground' && wasHop) window.ClawdParticles.burst(); // stuck the landing
+    // Flips (ultracode): one full turn of the whole stage while he's in the air.
+    if (spin && (m.mode !== 'air' || m.flip)) {
+      spin.cancel();
+      spin = null;
+    }
+    if (m.mode === 'air' && m.flip) {
+      spin = stage.animate(
+        [{ transform: 'rotate(0deg)' }, { transform: `rotate(${m.flip.deg}deg)` }],
+        { duration: m.flip.ms, easing: 'cubic-bezier(0.35, 0.1, 0.35, 1)' },
+      );
+      spin.onfinish = () => { spin = null; };
+      if (Math.random() < 0.3) say(Math.random() < 0.5 ? '🤸' : 'wheee!', 1200);
+    }
     if (m.mode === 'ground' && wasAirborne) {
       if (m.angry) {
         flash = { anim: 'clawd-angry', until: now() + 2800 };
@@ -203,6 +221,7 @@
 
   api.onHyper((on) => {
     hyper = !!on;
+    window.ClawdParticles.setOn(hyper);
     if (hyper) stimulus();
   });
 

@@ -31,5 +31,6 @@ contextBridge.exposeInMainWorld('clawd', {
   onBubble: (fn) => on('bubble', fn),
   onMotion: (fn) => on('motion', fn),
   onPosture: (fn) => on('posture', fn),
+  onHyper: (fn) => on('hyper', fn),
   onWake: (fn) => on('wake', fn),
 });

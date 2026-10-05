@@ -47,6 +47,7 @@ class Pet {
       getWindow: () => this.win,
       surfaces: ctx.surfaces,
       send: (ch, p) => this.send(ch, p),
+      isShown: () => this.shown,
       settings: () => ctx.state,
       world: ctx.world,
       heads: () => ctx.flock.headsExcept(this),
@@ -94,7 +95,8 @@ class Pet {
   // ---------- messages to his page ----------
 
   send(channel, payload) {
-    if (['activity', 'outfit', 'posture'].includes(channel)) this.lastState[channel] = payload;
+    if (['activity', 'outfit', 'posture', 'hyper'].includes(channel)) this.lastState[channel] = payload;
+    if (channel === 'hyper') this.physics && this.physics.setHyper(payload);
     if (channel === 'activity') this.physics && this.physics.setActivity(payload);
     if (channel === 'posture') this.physics && this.physics.setSitting(payload === 'sit');
     if (this.win && this.ready) this.win.webContents.send(channel, payload);
@@ -128,7 +130,7 @@ class Pet {
 
   // The top of his head, as a ledge another Clawd can land on.
   head() {
-    if (!this.win || !this.shown || this.physics.mode === 'held') return null;
+    if (!this.win || !this.shown || ['held', 'climb', 'air'].includes(this.physics.mode)) return null;
     const [wx, wy] = this.position();
     return { y: wy + HEAD_Y, x0: wx + HEAD_L, x1: wx + HEAD_R, kind: 'pet', pet: this };
   }
@@ -186,7 +188,9 @@ class Pet {
     const hb = this.hitbox;
     const point = { x: wx + (hb.x0 + hb.x1) / 2, y: wy + (hb.y0 + hb.y1) / 2 };
     foreground.probe(point, (owner, cls) => {
-      const covered = owner === 'other';
+      // The lock screen covers everything: nothing to step out from under.
+      const covered = owner === 'other' && !/LockScreen/i.test(cls || '');
+      if (!covered) this.dodges = 0;
       if (covered !== this.coveredBySystem) {
         this.coveredBySystem = covered;
         this.noteClick(covered ? `covered by ${cls}: stepping aside` : 'no longer covered');
@@ -194,7 +198,9 @@ class Pet {
       }
       // Walk out from under it (toasts live in the bottom-right corner, so
       // head left unless he's already at the left edge), then reappear.
-      if (covered && this.physics.mode === 'ground' && !this.physics.walk) {
+      // Still covered after two tries: it's something big; wait it out.
+      if (covered && this.physics.mode === 'ground' && !this.physics.walk && (this.dodges || 0) < 2) {
+        this.dodges = (this.dodges || 0) + 1;
         const w = this.ctx.world();
         const dir = this.center() - 320 > w.x0 + 40 * S ? -1 : 1;
         this.physics.walkTo(wx + dir * 320, 90);
@@ -293,7 +299,7 @@ class Pet {
     this.interactive = null;
     this.win = this.createWindow(x, y);
     if (!this.shown) this.win.setOpacity(0);
-    for (const ch of ['outfit', 'posture', 'activity']) {
+    for (const ch of ['outfit', 'posture', 'activity', 'hyper']) {
       if (ch in this.lastState) this.pending.push([ch, this.lastState[ch]]);
     }
     old.removeAllListeners('closed');
@@ -372,6 +378,7 @@ class Pet {
     if (!this.win || this.win.isDestroyed() || this.closing || !this.ctx.state.gravity) return;
     const ph = this.physics;
     if (ph.mode === 'held') return;
+    if (ph.mode === 'climb') return; // turned sideways on a wall: his feet aren't at the bottom
     const w = this.ctx.world();
     const [x, y] = this.position();
     const feet = y + FEET_Y;

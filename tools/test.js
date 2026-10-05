@@ -1,6 +1,6 @@
 // Headless checks for Clawd's logic (no Electron needed): node tools/test.js
 const assert = require('assert');
-const { Brain, toolActivity, shellActivity } = require('../src/brain');
+const { Brain, toolActivity, shellActivity, ultraFromText } = require('../src/brain');
 const { sanitizeOutfit } = require('../src/outfits');
 
 global.window = {};
@@ -62,6 +62,25 @@ test('shell command -> activity', () => {
     'sleep 5': 'thinking',
   };
   for (const [cmd, want] of Object.entries(cases)) assert.equal(shellActivity(cmd), want, cmd);
+});
+
+test('ultracode markers in a transcript', () => {
+  const on = '{"attachment":{"type":"ultra_effort_enter","reminderType":"full"},"type":"attachment"}';
+  const off = '{"attachment":{"type":"ultra_effort_exit"},"type":"attachment"}';
+  assert.equal(ultraFromText('{"type":"user"}'), null);
+  assert.equal(ultraFromText(on), true);
+  assert.equal(ultraFromText(on + '\n' + off), false);
+  assert.equal(ultraFromText(off + '\n' + on), true);
+  // Talking about the marker (escaped inside a message) doesn't count.
+  assert.equal(ultraFromText(JSON.stringify({ text: on })), null);
+});
+
+test('ultracode keyword -> hyper for that turn', () => {
+  const { ev, last } = makeBrain();
+  ev('a', 'UserPromptSubmit', { prompt: 'ultracode: rebuild the parser' });
+  assert.equal(last('hyper'), true);
+  ev('a', 'Stop');
+  assert.equal(last('hyper'), false);
 });
 
 test('prompt -> thinking, tool -> typing, stop -> happy + idle', () => {

@@ -87,3 +87,7 @@ body.dragging #stage {
 .pet-svg.flip {
     transform: scaleX(-1);
 }
+
+/* Ultracode: running up the side walls, feet on the wall. */
+#stage.climb-left { transform: rotate(90deg); }
+#stage.climb-right { transform: rotate(-90deg); }

@@ -223,7 +223,8 @@ class Surfaces {
 
   // Every line from just above his feet down to the floor, across the whole
   // display (full extents, for walking and for wherever a throw takes him).
-  async scanWide(bounds, floor) {
+  // `above`: also look this far above his feet (he's jumping up).
+  async scanWide(bounds, floor, above = 0) {
     const win = this.getWindow();
     const display = screen.getDisplayMatching(bounds);
     const feet = feetOf(bounds);
@@ -234,7 +235,7 @@ class Surfaces {
     if (img && !img.isEmpty()) {
       const x0 = floor ? floor.x0 : display.bounds.x;
       const x1 = floor ? floor.x1 : display.bounds.x + display.bounds.width;
-      const rect = { x0, x1, y0: Math.max(display.bounds.y + 1, feet.y - 24), y1: bottom - 1 };
+      const rect = { x0, x1, y0: Math.max(display.bounds.y + 1, feet.y - 24 - above), y1: bottom - 1 };
       for (const line of findLines(img, display, rect, this.getMask())) lines.push({ ...line, kind: 'edge' });
     }
     if (process.env.CLAWD_TRACE) this.log(`scanWide feet=${feet.y.toFixed(0)} mask=${JSON.stringify(this.getMask())} lines=${JSON.stringify(lines.filter((l) => l.y < feet.y + 200).map((l) => [Math.round(l.y), Math.round(l.x0), Math.round(l.x1), l.hiddenLeft ? 'hL' : '', l.hiddenRight ? 'hR' : '']))}`);

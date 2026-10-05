@@ -24,8 +24,19 @@ const CENTER = (FEET_L + FEET_R) / 2;
 const HEAD_TOP = 75 * S; // px from the window top to the top of his head
 const HALF_FEET = (FEET_R - FEET_L) / 2;
 
+// Hyper mode (Claude Code on ultracode): he runs, hops and climbs walls.
+const RUN_SPEED = 150 * S; // px/s
+const CLIMB_SPEED = 120 * S; // px/s up a wall
+const HYPER_TICK_MS = 600; // how often he picks his next stunt
+// Climbing, he's turned 90° with his feet on the wall: how far the window's
+// left edge sits from the wall (left wall), or from the wall minus the window
+// (right wall), so his feet touch it.
+const CLIMB_INSET = SIZE - FEET_Y;
+const CLIMB_BODY = 25 * S; // half his width incl. arms: his side rests this far above the floor as he starts up
+
 class Physics {
-  constructor({ getWindow, surfaces, send, settings, world, onRest, log, heads }) {
+  constructor({ getWindow, surfaces, send, settings, world, onRest, log, heads, isShown }) {
+    this.isShown = isShown || (() => true);
     this.heads = heads || (() => []); // other Clawds' heads: ledges he can land on
     this.getWindow = getWindow;
     this.surfaces = surfaces;
@@ -52,10 +63,14 @@ class Physics {
     this.timer = null;
     this.last = 0;
     this.wanderTimer = setInterval(() => this.maybeWander(), 2500);
+    this.hyper = false;
+    this.climb = null; // { side: -1 left wall | 1 right wall, topY }
+    this.hyperTimer = setInterval(() => this.hyperTick(), HYPER_TICK_MS);
   }
 
   dispose() {
     clearInterval(this.wanderTimer);
+    clearInterval(this.hyperTimer);
     this.loop(false);
   }
 
@@ -116,7 +131,9 @@ class Physics {
   // ---------- being dragged and thrown ----------
 
   grab() {
+    if (this.mode === 'climb') this.motion('held'); // turn him upright again
     this.mode = 'held';
+    this.climb = null;
     this.walk = null;
     this.loop(false);
     this.samples = [];
@@ -153,6 +170,7 @@ class Physics {
   launch(vx, vy, cause, { ledgeGrab = false, ignoreY = null } = {}) {
     this.ignoreY = ignoreY;
     this.mode = 'air';
+    this.climb = null;
     this.walk = null;
     this.vx = vx;
     this.vy = vy;
@@ -160,10 +178,12 @@ class Physics {
     this.lines = null;
     this.checkedFeetY = this.feetY();
     this.startFeetY = this.feetY();
-    this.motion('air');
+    this.motion('air', { hop: cause === 'hop' });
     this.loop(true);
     const w = this.world();
-    this.surfaces.scanWide(this.bounds(), w.floor).then((lines) => {
+    // Jumping up: look for ledges as high as he'll get, so he can land on them.
+    const rise = vy < 0 ? (vy * vy) / (2 * G) + 10 : 0;
+    this.surfaces.scanWide(this.bounds(), w.floor, rise).then((lines) => {
       if (this.mode !== 'air') return;
       this.lines = lines;
       if (ledgeGrab) {
@@ -197,6 +217,7 @@ class Physics {
     const dt = Math.min(0.05, (now - this.last) / 1000);
     this.last = now;
     if (this.mode === 'air') this.airStep(dt);
+    else if (this.mode === 'climb') this.climbStep(dt);
     else if (this.mode === 'teeter') this.teeterStep();
     else if (this.mode === 'ground' && this.walk) this.walkStep(dt);
     else this.loop(false);
@@ -253,7 +274,8 @@ class Physics {
     this.mode = 'ground';
     this.loop(false);
     this.place();
-    const angry = impact >= HARD_LANDING || (this.cause === 'slip' && impact > 300);
+    // Stunts never hurt: he meant to do that.
+    const angry = this.cause !== 'hop' && (impact >= HARD_LANDING || (this.cause === 'slip' && impact > 300));
     this.motion('ground', { impact: Math.round(impact), angry });
     this.cause = null;
     this.stimulus();
@@ -317,7 +339,7 @@ class Physics {
 
   canWander() {
     const s = this.settings();
-    return this.mode === 'ground' && !this.walk && s.gravity && !this.sitting
+    return !this.hyper && this.mode === 'ground' && !this.walk && s.gravity && !this.sitting
       && !(this.ground && this.ground.kind === 'pet') // standing on a friend's head: stay put
       && (this.activity === null || this.activity === 'chatting' || this.activity === 'fetching' || this.activity === 'sweeping')
       && Date.now() - this.lastStimulus < 18 * 1000; // not while he's dozing/asleep
@@ -351,6 +373,7 @@ class Physics {
       this.x = wk.targetX;
       this.walk = null;
       this.place();
+      if (wk.climb) return this.startClimb(wk.climb);
       this.motion('ground');
       this.onRest();
       return;
@@ -382,16 +405,112 @@ class Physics {
     this.onRest();
   }
 
+  // ---------- hyper mode (ultracode) ----------
+
+  // Ultracode: he never sits still. Runs back and forth, hops (onto higher
+  // ledges if there are any), and dashes at the side walls to run up them.
+  setHyper(on) {
+    on = !!on;
+    if (on === this.hyper) return;
+    this.hyper = on;
+    if (on) {
+      this.stimulus();
+      return;
+    }
+    if (this.mode === 'climb') this.leap();
+    else if (this.walk && this.walk.speed === RUN_SPEED) this.stopWalking();
+  }
+
+  hyperTick() {
+    if (!this.hyper || !this.settings().gravity || this.mode !== 'ground' || this.walk || !this.ground) return;
+    if (!this.isShown()) return; // nobody to show off to (and each hop costs a screen capture)
+    // Asleep (nothing going on and you've been away): let him sleep.
+    if (this.activity === null && Date.now() - this.lastStimulus > 18 * 1000) return;
+    if (!this.sync()) return;
+    if (this.ground.kind === 'pet') return this.hop(); // off his friend's head
+    const line = this.ground;
+    const w = this.world();
+    const lo = Math.max(line.x0, w.x0) + HALF_FEET + 4 - CENTER;
+    const hi = Math.min(line.x1, w.x1) - HALF_FEET - 4 - CENTER;
+    const wallL = line.x0 <= w.x0 + 2;
+    const wallR = line.x1 >= w.x1 - 2;
+    const roll = Math.random();
+    if (roll < 0.15) return; // a split-second breather
+    if (roll < 0.35 && (wallL || wallR)) {
+      const side = wallL && wallR ? (this.center() < (w.x0 + w.x1) / 2 ? -1 : 1) : wallL ? -1 : 1;
+      return this.runTo(side < 0 ? lo : hi, side);
+    }
+    if (roll < 0.6 || hi - lo < 40 * S) return this.hop();
+    let target = lo + Math.random() * (hi - lo);
+    if (Math.abs(target - this.x) < 80 * S) target = this.x + (target >= this.x ? 1 : -1) * 160 * S;
+    this.runTo(Math.max(lo, Math.min(hi, target)), 0);
+  }
+
+  // Sprint along his ledge; with climbSide set, run up that wall on arrival.
+  runTo(targetX, climbSide = 0) {
+    if (!Number.isFinite(targetX)) return;
+    if (Math.abs(targetX - this.x) < 4) {
+      if (climbSide) this.startClimb(climbSide);
+      return;
+    }
+    const dir = targetX > this.x ? 1 : -1;
+    this.walk = { dir, targetX, speed: RUN_SPEED, climb: climbSide };
+    this.motion('walk', { dir, run: true });
+    this.loop(true);
+  }
+
+  hop() {
+    const dir = Math.random() < 0.5 ? -1 : 1;
+    const vx = dir * (100 + Math.random() * 280) * S;
+    const vy = -(650 + Math.random() * 500) * Math.sqrt(S); // 80-230 px high at full size
+    this.ground = null;
+    this.walk = null;
+    this.launch(vx, vy, 'hop');
+  }
+
+  // Turned 90°, feet on the wall, running up it.
+  startClimb(side) {
+    const w = this.world();
+    const floorY = this.ground ? this.ground.y : w.floor.y;
+    this.walk = null;
+    this.ground = null;
+    this.mode = 'climb';
+    this.x = side < 0 ? w.x0 - CLIMB_INSET : w.x1 - FEET_Y;
+    this.y = floorY - SIZE / 2 - CLIMB_BODY;
+    const height = (180 + Math.random() * 420) * S;
+    this.climb = { side, topY: Math.max(w.top + 20 * S, this.y - height) };
+    this.motion('climb', { side });
+    this.loop(true);
+    this.place();
+  }
+
+  climbStep(dt) {
+    if (!this.climb) return this.leap();
+    this.y -= CLIMB_SPEED * dt;
+    if (this.y <= this.climb.topY) return this.leap();
+    this.place();
+  }
+
+  // Kick off the wall and fly back into the room.
+  leap() {
+    const side = this.climb ? this.climb.side : (this.center() < (this.world().x0 + this.world().x1) / 2 ? -1 : 1);
+    this.climb = null;
+    const w = this.world();
+    this.x = side < 0 ? w.x0 - FEET_L + 2 : w.x1 - FEET_R - 2;
+    this.place();
+    this.launch(-side * (300 + Math.random() * 350) * S, -(250 + Math.random() * 350) * Math.sqrt(S), 'hop');
+  }
+
   // ---------- outside events ----------
 
   setActivity(activity) {
     this.activity = activity;
     this.stimulus();
-    if (this.walk && !(activity === null || activity === 'chatting' || activity === 'fetching' || activity === 'sweeping')) this.stopWalking();
+    if (this.walk && !this.hyper && !(activity === null || activity === 'chatting' || activity === 'fetching' || activity === 'sweeping')) this.stopWalking();
   }
 
   setSitting(sitting) {
-    this.sitting = sitting;
+    this.sitting = sitting && !this.hyper;
     if (sitting) this.stopWalking();
   }
 

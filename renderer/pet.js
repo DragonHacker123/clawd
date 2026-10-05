@@ -66,6 +66,7 @@
   let shownKey = '';
   let motion = { mode: 'ground', dir: 1 };
   let sitting = false;
+  let hyper = false; // ultracode: running, hopping, climbing walls
 
   function now() {
     return Date.now();
@@ -96,11 +97,13 @@
   function pickAnimation(t) {
     if (reaction && t < reaction.until) return reaction.anim;
     reaction = null;
-    if (motion.mode === 'air') return 'clawd-react-drag';
+    if (motion.mode === 'climb') return 'clawd-walk';
+    if (motion.mode === 'air') return motion.hop ? 'clawd-happy' : 'clawd-react-drag';
     if (motion.mode === 'teeter') return 'clawd-teeter';
     if (flash && t < flash.until) return flash.anim;
     flash = null;
     if (motion.mode === 'walk') {
+      if (motion.run) return 'clawd-walk';
       if (activity === 'fetching') return ACTIVITY.fetching;
       if (activity === 'sweeping') return ACTIVITY.sweeping;
       return 'clawd-walk';
@@ -132,13 +135,20 @@
   function tick() {
     const anim = pickAnimation(now());
     const acc = accessories();
-    const flip = motion.mode === 'walk' && motion.dir < 0;
+    // Up a wall he faces up it: turned 90° with his feet on the wall.
+    const climb = motion.mode === 'climb' ? motion.side : 0;
+    const flip = climb ? climb < 0 : motion.mode === 'walk' && motion.dir < 0;
+    const fast = climb ? 2 : motion.mode === 'walk' && motion.run ? 2.6 : 1;
     // Long tasks: he sits down to work.
     const sit = sitting && motion.mode === 'ground' && WORKING.has(anim);
-    const key = `${anim}|${acc.map(a => a.id).join(',')}|${flip}|${sit}`;
+    const key = `${anim}|${acc.map(a => a.id).join(',')}|${flip}|${sit}|${climb}|${fast}`;
     if (key !== shownKey) {
       shownKey = key;
       window.ClawdSprites.render(stage, anim, acc, { flip, sit });
+      stage.classList.toggle('climb-left', climb < 0);
+      stage.classList.toggle('climb-right', climb > 0);
+      // Running: legs and bob at double speed.
+      for (const a of document.getAnimations()) a.playbackRate = fast;
     }
   }
 
@@ -189,6 +199,11 @@
 
   api.onPosture((p) => {
     sitting = p === 'sit';
+  });
+
+  api.onHyper((on) => {
+    hyper = !!on;
+    if (hyper) stimulus();
   });
 
   // ---------- mouse: click-through, drag, clicks ----------

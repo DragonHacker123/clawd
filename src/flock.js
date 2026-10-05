@@ -139,7 +139,12 @@ class Flock {
       pet.shownOutfit = outfitId;
       pet.send('outfit', outfit);
     }
-    const sit = !!(s.busySince && now - s.busySince > LONG_TASK_MS);
+    const hyper = !!s.ultra;
+    if (hyper !== pet.shownHyper) {
+      pet.shownHyper = hyper;
+      pet.send('hyper', hyper);
+    }
+    const sit = !hyper && !!(s.busySince && now - s.busySince > LONG_TASK_MS);
     if (sit !== pet.shownSit) {
       pet.shownSit = sit;
       pet.send('posture', sit ? 'sit' : 'stand');
@@ -198,7 +203,7 @@ class Flock {
       if (p.physics.mode !== 'ground' || !g || g.kind !== 'pet') continue;
       const base = g.pet;
       const gone = !this.pets.includes(base) || base.closing || !base.shown;
-      if (gone || ['air', 'held', 'teeter'].includes(base.physics.mode)) {
+      if (gone || ['air', 'held', 'teeter', 'climb'].includes(base.physics.mode)) {
         p.physics.fallFromRest();
         continue;
       }

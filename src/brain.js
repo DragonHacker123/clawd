@@ -3,6 +3,7 @@
 // most recently typed into, and only falls back to another busy session when
 // that one goes quiet.
 const path = require('path');
+const fsp = require('fs').promises;
 const { sanitizeOutfit } = require('./outfits');
 
 const STALE_MS = 10 * 60 * 1000;
@@ -47,6 +48,51 @@ function toolActivity(name = '', input = {}) {
     return 'juggling';
   }
   return 'thinking';
+}
+
+// ---------- ultracode ----------
+// Claude Code doesn't put the effort mode in hook events, but switching
+// ultracode on or off writes a marker into the session's transcript (whose
+// path every hook event carries). The last marker wins.
+const ULTRA_ON = '"attachment":{"type":"ultra_effort_enter"';
+const ULTRA_OFF = '"attachment":{"type":"ultra_effort_exit"';
+const CHUNK = 1024 * 1024;
+const MAX_BACK = 64 * CHUNK; // give up looking further back than this
+
+// true (on), false (off) or null (no marker in this text).
+function ultraFromText(text) {
+  const on = text.lastIndexOf(ULTRA_ON);
+  const off = text.lastIndexOf(ULTRA_OFF);
+  if (on < 0 && off < 0) return null;
+  return on > off;
+}
+
+async function readSlice(fh, start, end) {
+  const buf = Buffer.alloc(end - start);
+  const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+  return buf.toString('utf8', 0, bytesRead);
+}
+
+// The newest marker in bytes [from, size) of the transcript; reading
+// backwards from the end when from is null (first look at a session).
+async function ultraMarker(file, from, size) {
+  const fh = await fsp.open(file, 'r');
+  try {
+    if (from !== null) {
+      for (let end = size; end > from; end -= CHUNK) {
+        const found = ultraFromText(await readSlice(fh, Math.max(from - 100, end - CHUNK - 100, 0), end));
+        if (found !== null) return found;
+      }
+      return null;
+    }
+    for (let end = size; end > 0 && size - end < MAX_BACK; end -= CHUNK) {
+      const found = ultraFromText(await readSlice(fh, Math.max(0, end - CHUNK - 100), end));
+      if (found !== null) return found;
+    }
+    return null;
+  } finally {
+    await fh.close();
+  }
 }
 
 class Brain {
@@ -101,6 +147,7 @@ class Brain {
     switch (ev.hook_event_name) {
       case 'UserPromptSubmit': {
         const prompt = String(ev.prompt || '');
+        s.ultraTurn = /\bultracode\b/i.test(prompt); // the keyword turns it on for this turn
         if (!s.busy) s.busySince = t;
         s.busy = true;
         s.lastPrompt = t;
@@ -128,11 +175,13 @@ class Brain {
         break;
       case 'Stop':
         s.busy = false;
+        s.ultraTurn = false;
         s.activity = null;
         if (this.isFocus(s)) this.send('flash', { state: 'happy', ms: 2600 });
         break;
       case 'StopFailure':
         s.busy = false;
+        s.ultraTurn = false;
         s.activity = null;
         if (this.isFocus(s)) this.send('flash', { state: 'error', ms: 3000 });
         break;
@@ -143,8 +192,41 @@ class Brain {
       default:
         break;
     }
+    if (ev.transcript_path) s.transcriptPath = String(ev.transcript_path);
+    s.ultra = !!(s.ultraSession || s.ultraTurn);
+    this.checkUltra(s, ev.hook_event_name === 'UserPromptSubmit');
     this.refocus();
     this.publish();
+  }
+
+  // Has ultracode been switched on or off in this session? Reads only what
+  // was added to the transcript since the last look (at most every 3 s).
+  async checkUltra(s, force = false) {
+    const file = s.transcriptPath;
+    if (!file || s.ultraBusy) return;
+    const t = Date.now();
+    if (!force && t - (s.ultraChecked || 0) < 3000) return;
+    s.ultraBusy = true;
+    s.ultraChecked = t;
+    try {
+      const { size } = await fsp.stat(file);
+      if (s.ultraFile !== file || size < (s.ultraOffset || 0)) {
+        s.ultraFile = file;
+        s.ultraOffset = null;
+      }
+      const found = await ultraMarker(file, s.ultraOffset, size);
+      s.ultraOffset = size;
+      if (found !== null) s.ultraSession = found;
+    } catch {
+      // transcript unreadable: keep what we knew
+    } finally {
+      s.ultraBusy = false;
+    }
+    const ultra = !!(s.ultraSession || s.ultraTurn);
+    if (ultra !== s.ultra) {
+      s.ultra = ultra;
+      this.publish();
+    }
   }
 
   isFocus(s) {
@@ -305,7 +387,13 @@ class Brain {
       this.shown.outfitId = outfitId;
       this.send('outfit', outfit);
     }
-    const sit = !!(focus && focus.busy && focus.busySince && Date.now() - focus.busySince > LONG_TASK_MS);
+    // Ultracode: he's hyper (runs, hops, climbs walls) and never sits down.
+    const hyper = !!(focus && focus.ultra);
+    if (hyper !== this.shown.hyper) {
+      this.shown.hyper = hyper;
+      this.send('hyper', hyper);
+    }
+    const sit = !hyper && !!(focus && focus.busy && focus.busySince && Date.now() - focus.busySince > LONG_TASK_MS);
     if (sit !== this.sitting) {
       this.sitting = sit;
       this.onPosture(sit);
@@ -318,4 +406,4 @@ class Brain {
   }
 }
 
-module.exports = { Brain, toolActivity, shellActivity };
+module.exports = { Brain, toolActivity, shellActivity, ultraFromText, ultraMarker };

@@ -1,6 +1,6 @@
 // Headless checks for Clawd's logic (no Electron needed): node tools/test.js
 const assert = require('assert');
-const { Brain, toolActivity } = require('../src/brain');
+const { Brain, toolActivity, shellActivity } = require('../src/brain');
 const { sanitizeOutfit } = require('../src/outfits');
 
 global.window = {};
@@ -43,6 +43,25 @@ test('tool -> activity mapping', () => {
   assert.equal(toolActivity('mcp__Claude_Browser__navigate'), 'fetching');
   assert.equal(toolActivity('mcp__something__else'), 'juggling');
   assert.equal(toolActivity('SomethingNew'), 'thinking');
+});
+
+test('shell command -> activity', () => {
+  const cases = {
+    'cat src/brain.js | head -40': 'reading',
+    'sed -n 10,40p main.js': 'reading',
+    'grep -n foo src/*.js': 'searching',
+    'git status --short': 'searching',
+    'npm test 2>&1 | tail -1': 'searching',
+    "python - <<'EOF'\nprint(1)\nEOF": 'typing',
+    'git add -A && git commit -m x': 'typing',
+    'curl -s http://127.0.0.1:47321/debug/pets': 'fetching',
+    'git push origin main': 'fetching',
+    'rm -f snap.png': 'sweeping',
+    'npm run build': 'building',
+    'powershell -NoProfile -File tools/restart.ps1': 'building',
+    'sleep 5': 'thinking',
+  };
+  for (const [cmd, want] of Object.entries(cases)) assert.equal(shellActivity(cmd), want, cmd);
 });
 
 test('prompt -> thinking, tool -> typing, stop -> happy + idle', () => {

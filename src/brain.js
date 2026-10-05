@@ -12,17 +12,30 @@ const CHAT_WORK_MS = 10 * 60 * 1000; // after "working", unless "done" comes fir
 const LONG_TASK_MS = 90 * 1000; // busy this long on one prompt: he sits down
 const MOODS = ['happy', 'celebrate', 'excited', 'thinking', 'confused', 'surprised', 'sleepy'];
 
+// A shell command can be anything, so look at what it does. Checked in order:
+// the first match wins, so e.g. "npm test | grep fail" counts as testing.
+const SHELL_KINDS = [
+  ['searching', /\b(test|tests|pytest|jest|vitest|mocha|lint|eslint|cargo test|go test)\b/],
+  ['sweeping', /(^|[;&|]\s*)(rm|rmdir|del|remove-item|git clean|git stash)\b|\b(clean|prune|cleanup)\b/],
+  ['fetching', /\b(curl|wget|invoke-webrequest|invoke-restmethod|iwr|irm|ssh|scp|rsync|git (push|pull|fetch|clone)|gh (api|pr|repo|issue|run)|npm (install|i|ci)|pip install|yarn add|pnpm (add|install))\b/],
+  ['typing', /<<\s*'?\w+|\bsed -i\b|\btee\b|>\s*[\w./~"$-]|\b(set-content|add-content|out-file|new-item|copy-item|move-item|patch|mkdir|cp|mv)\b|\bgit (commit|add|apply|mv)\b/],
+  ['searching', /(^|[;&|(]\s*)(grep|rg|find|fd|ls|dir|tree|where|which|get-childitem|select-string|du|wc|git (status|log|diff|show|grep|blame|branch))\b/],
+  ['reading', /(^|[;&|(]\s*)(cat|head|tail|less|more|type|get-content|sed -n|awk|jq|bat)\b/],
+  ['thinking', /(^|[;&|(]\s*)(sleep|start-sleep|wait|timeout)\b/],
+];
+
+function shellActivity(command = '') {
+  const cmd = String(command).toLowerCase();
+  for (const [kind, re] of SHELL_KINDS) if (re.test(cmd)) return kind;
+  return 'building'; // compiling, running scripts, anything else
+}
+
 function toolActivity(name = '', input = {}) {
   const n = name.toLowerCase();
   if (['edit', 'write', 'multiedit', 'notebookedit'].includes(n)) return 'typing';
   if (n === 'read') return 'reading';
   if (['grep', 'glob', 'ls', 'toolsearch'].includes(n)) return 'searching';
-  if (n === 'bash' || n === 'powershell') {
-    const cmd = String(input.command || '').toLowerCase();
-    if (/\b(test|pytest|jest|vitest|lint)\b/.test(cmd)) return 'searching';
-    if (/\b(rm|del|clean|prune)\b/.test(cmd)) return 'sweeping';
-    return 'building';
-  }
+  if (n === 'bash' || n === 'powershell') return shellActivity(input.command);
   if (['websearch', 'webfetch'].includes(n)) return 'fetching';
   if (['agent', 'task', 'sendmessage'].includes(n)) return 'conducting';
   if (['todowrite', 'taskcreate', 'taskupdate'].includes(n)) return 'sweeping';
@@ -305,4 +318,4 @@ class Brain {
   }
 }
 
-module.exports = { Brain, toolActivity };
+module.exports = { Brain, toolActivity, shellActivity };

@@ -7,6 +7,7 @@
 const path = require('path');
 const { Pet } = require('./pet');
 const { FEET_Y } = require('./surfaces');
+const S = require('./geometry').scale;
 
 const MAX_EXTRA = 3;
 const LINGER_MS = 40 * 1000; // an extra Clawd hangs around this long after his task ends
@@ -152,14 +153,14 @@ class Flock {
     const w = this.ctx.world();
     const taken = this.pets.map((p) => p.center());
     let x = px;
-    for (const offset of [90, -90, 170, -170, 250, -250]) {
-      const cx = px + 75 + offset;
-      if (cx > w.x0 + 40 && cx < w.x1 - 40 && taken.every((t) => Math.abs(t - cx) > 60)) {
+    for (const offset of [90 * S, -90 * S, 170 * S, -170 * S, 250 * S, -250 * S]) {
+      const cx = px + 75 * S + offset;
+      if (cx > w.x0 + 40 * S && cx < w.x1 - 40 * S && taken.every((t) => Math.abs(t - cx) > 60 * S)) {
         x = px + offset;
         break;
       }
     }
-    const y = Math.max(w.top - 60, py - 40); // a short hop down onto the same ledge as the others
+    const y = Math.max(w.top - 60 * S, py - 40 * S); // a short hop down onto the same ledge as the others
     const pet = this.add(new Pet(this.ctx, { x, y, sessionId: session.id }));
     pet.send('bubble', { text: labelFor(session), ms: 3500 });
     if (lead) lead.send('flash', { state: 'alert', ms: 1200 }); // "oh, a friend!"
@@ -233,12 +234,12 @@ class Flock {
       const c = p.center();
       const nearest = friends.sort((a, b) => Math.abs(a.center() - c) - Math.abs(b.center() - c))[0];
       const d = nearest.center() - c;
-      if (Math.abs(d) > 110 && Math.random() < 0.5) {
+      if (Math.abs(d) > 110 * S && Math.random() < 0.5) {
         const [x] = p.position();
-        ph.walkTo(x + d - Math.sign(d) * 60);
-      } else if (Math.abs(d) < 34) {
+        ph.walkTo(x + d - Math.sign(d) * 60 * S);
+      } else if (Math.abs(d) < 34 * S) {
         const [x] = p.position();
-        ph.walkTo(x - Math.sign(d || 1) * 30, 40);
+        ph.walkTo(x - Math.sign(d || 1) * 30 * S, 40 * S);
       }
     }
 
@@ -249,7 +250,7 @@ class Flock {
         const b = pets[j];
         if (!this.sameLedge(a, b) || a.physics.walk || b.physics.walk) continue;
         const d = Math.abs(a.center() - b.center());
-        if (d < 36 || d > 120) continue;
+        if (d < 36 * S || d > 120 * S) continue;
         const key = `${Math.min(a.id, b.id)}-${Math.max(a.id, b.id)}`;
         if (now - (this.social.get(key) || 0) < SOCIAL_COOLDOWN_MS || Math.random() > 0.35) continue;
         this.social.set(key, now);

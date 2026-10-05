@@ -88,6 +88,10 @@ function startServer(brain, debug = {}) {
           debug.dropAt(body);
           return reply(200, { ok: true });
         }
+        if (req.url === '/debug/teleport' && debug.teleport) {
+          debug.teleport(body);
+          return reply(200, { ok: true });
+        }
         if (req.url === '/debug/force-interactive' && debug.forceInteractive) {
           debug.forceInteractive(body.ms);
           return reply(200, { ok: true });

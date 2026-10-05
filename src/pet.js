@@ -6,12 +6,14 @@ const { BrowserWindow, screen } = require('electron');
 const path = require('path');
 const { FEET_Y, FEET_L, FEET_R } = require('./surfaces');
 const { Physics } = require('./physics');
+const geometry = require('./geometry');
 
-const SIZE = 150;
+const S = geometry.scale; // 1 on the 1080p desk this was drawn for; smaller on small screens
+const SIZE = Math.round(150 * S);
 // His head top (viewBox y=6) in window px: another Clawd can stand on it.
-const HEAD_Y = (6 + 25) * (150 / 45);
-const HEAD_L = (2 + 15) * (150 / 45);
-const HEAD_R = (13 + 15) * (150 / 45);
+const HEAD_Y = (6 + 25) * ((150 * S) / 45);
+const HEAD_L = (2 + 15) * ((150 * S) / 45);
+const HEAD_R = (13 + 15) * ((150 * S) / 45);
 
 let nextId = 1;
 
@@ -25,7 +27,7 @@ class Pet {
     this.ready = false;
     this.pending = [];
     this.shown = true;
-    this.hitbox = { x0: 50, y0: 70, x1: 100, y1: 140 };
+    this.hitbox = { x0: 50 * S, y0: 70 * S, x1: 100 * S, y1: 140 * S };
     this.interactive = false;
     this.lastAssert = 0;
     this.forceInteractiveUntil = 0;
@@ -62,6 +64,8 @@ class Pet {
       webPreferences: {
         preload: path.join(__dirname, '..', 'preload.js'),
         contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false,
+        additionalArguments: [`--clawd-scale=${S}`],
+        zoomFactor: S, // the page is laid out on 150 CSS px, so zooming scales sprite and bubble together
       },
     });
     // Electron's setPosition throws on -0 (Math.round(-0.3) is -0) and NaN, which
@@ -116,7 +120,7 @@ class Pet {
   mask() {
     if (!this.win) return null;
     const [wx, wy] = this.position();
-    return { x0: wx + Math.min(40, this.hitbox.x0), x1: wx + Math.max(110, this.hitbox.x1), y0: wy, y1: wy + 141 };
+    return { x0: wx + Math.min(40 * S, this.hitbox.x0), x1: wx + Math.max(110 * S, this.hitbox.x1), y0: wy, y1: wy + 141 * S };
   }
 
   // The top of his head, as a ledge another Clawd can land on.
@@ -189,7 +193,7 @@ class Pet {
       // head left unless he's already at the left edge), then reappear.
       if (covered && this.physics.mode === 'ground' && !this.physics.walk) {
         const w = this.ctx.world();
-        const dir = this.center() - 320 > w.x0 + 40 ? -1 : 1;
+        const dir = this.center() - 320 > w.x0 + 40 * S ? -1 : 1;
         this.physics.walkTo(wx + dir * 320, 90);
       }
     });
@@ -231,7 +235,10 @@ class Pet {
   }
 
   setHitbox(box) {
-    if (box && [box.x0, box.y0, box.x1, box.y1].every(Number.isFinite)) this.hitbox = box;
+    // The page reports CSS px on its 150 px canvas; the window is S times that.
+    if (box && [box.x0, box.y0, box.x1, box.y1].every(Number.isFinite)) {
+      this.hitbox = { x0: box.x0 * S, y0: box.y0 * S, x1: box.x1 * S, y1: box.y1 * S };
+    }
   }
 
   // The page says every second whether a press is really down; if we think
@@ -304,8 +311,8 @@ class Pet {
     const c = screen.getCursorScreenPoint();
     // Synthetic test input doesn't move the OS cursor; fall back to the page's delta.
     const moved = c.x !== this.dragOrigin.cursor.x || c.y !== this.dragOrigin.cursor.y;
-    const x = Math.round(this.dragOrigin.win[0] + (moved ? c.x - this.dragOrigin.cursor.x : dx));
-    const y = Math.round(this.dragOrigin.win[1] + (moved ? c.y - this.dragOrigin.cursor.y : dy));
+    const x = Math.round(this.dragOrigin.win[0] + (moved ? c.x - this.dragOrigin.cursor.x : dx * S));
+    const y = Math.round(this.dragOrigin.win[1] + (moved ? c.y - this.dragOrigin.cursor.y : dy * S));
     this.win.setPosition(x, y);
     this.physics.heldAt(x, y);
   }
@@ -351,6 +358,37 @@ class Pet {
       this.physics.ground = null;
     }
     if (this.ctx.state.gravity) this.physics.settle();
+  }
+
+  // Safety net: he must never be below the floor (the taskbar top / Claude's
+  // bottom edge) or off the side of his world, whatever went wrong (rounding at
+  // odd display scaling, a changed taskbar, a lost scan). Pull him back and let
+  // him land again.
+  guardFloor() {
+    if (!this.win || this.win.isDestroyed() || this.closing || !this.ctx.state.gravity) return;
+    const ph = this.physics;
+    if (ph.mode === 'held') return;
+    const w = this.ctx.world();
+    const [x, y] = this.position();
+    const feet = y + FEET_Y;
+    const slack = ph.mode === 'air' ? 60 * S : 3;
+    const c = x + (FEET_L + FEET_R) / 2;
+    const outside = feet > w.floor.y + slack || c < w.x0 - 20 || c > w.x1 + 20 || y > w.floor.y;
+    if (!outside) return;
+    const now = Date.now();
+    if (now - (this.lastGuardLog || 0) > 5000) {
+      this.lastGuardLog = now;
+      this.ctx.log(`guard: Clawd ${this.id} was out of bounds (pos ${x},${y} feet ${feet.toFixed(0)} floor ${w.floor.y} world ${w.x0}-${w.x1} mode ${ph.mode}); pulling him back`);
+    }
+    const p = this.clampToWorld(x, y);
+    this.win.setPosition(p.x, Math.min(p.y, Math.round(w.floor.y - FEET_Y)));
+    ph.walk = null;
+    ph.ground = null;
+    ph.mode = 'ground';
+    ph.vx = ph.vy = 0;
+    ph.loop(false);
+    ph.sync();
+    ph.settle();
   }
 
   // ---------- following the ledge he stands on ----------

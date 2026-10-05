@@ -24,6 +24,7 @@ class FgWatch {
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr p);
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string title);
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int v, int size);
   [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
@@ -111,6 +112,17 @@ class FgWatch {
   static bool Cloaked(IntPtr h) {
     int cloaked;
     return DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0; // DWMWA_CLOAKED
+  }
+
+  // The main taskbar's rectangle in physical pixels. When it auto-hides it
+  // slides mostly off-screen but keeps its height, which is what Clawd needs
+  // to stay clear of the spot where it pops back up.
+  static string Tray() {
+    IntPtr h = FindWindow("Shell_TrayWnd", null);
+    if (h == IntPtr.Zero) return "\"tray\":null";
+    RECT r;
+    if (!GetWindowRect(h, out r)) return "\"tray\":null";
+    return "\"tray\":[" + r.L + "," + r.T + "," + (r.R - r.L) + "," + (r.B - r.T) + "]";
   }
 
   // One pass over top-level windows in z-order (top first): find Claude's main
@@ -258,7 +270,7 @@ class FgWatch {
       try {
         string kind = Kind(GetForegroundWindow());
         claudeInFront = kind == "claude";
-        line = "{\"fg\":\"" + kind + "\"," + Scan() + "}";
+        line = "{\"fg\":\"" + kind + "\"," + Scan() + "," + Tray() + "}";
       } catch (Exception e) {
         line = "{\"error\":\"" + e.Message.Replace("\"", "'") + "\"}";
       }

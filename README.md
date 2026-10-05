@@ -87,7 +87,19 @@ Claude chat ──mcp/clawd-mcp.js (in .mcpb)──▶ /chat ─┘     │     
 | `electron tools/test-platform.js x y w secs [y1,y2,...]` | Temporary platform window (optionally moving), for testing landing, riding and falling |
 | `electron tools/eye-check.js` | Steps through every animation frame and flags one-eyed moments |
 | `CLAWD_TRACE=1 npm start` | Logs every ledge-tracking scan to clawd.log |
+| `CLAWD_SCALE=0.65 npm start` | Pretend the screen is smaller (Clawd's size; normally from your screen) |
 | `tools/snap.sh out.png` | Snapshot of the live pet and brain state |
 | `powershell -File tools/restart.ps1` | Restarts the running pet |
 
 Design notes and the review that shaped this are in `BRAINSTORM.md`.
+
+## Size and the taskbar
+
+Clawd sizes himself from your screen: 150 px tall on a 1080p desktop at 100% scaling, smaller on a
+laptop or at 125-150% display scaling (between 0.5x and 1.6x). **Size** in the tray menu makes him
+smaller or larger than that. If the screen changes a lot (docking, a new monitor, a different scaling
+setting) he restarts to resize himself.
+
+The floor is the top of the taskbar. It's read from the taskbar window itself, so it still counts when
+the taskbar auto-hides. Every 0.7 s a guard checks that no Clawd is below the floor or off the side of
+his world. If one is, it puts him back and logs a `guard:` line in clawd.log.

@@ -8,7 +8,12 @@ function on(channel, fn) {
   ipcRenderer.on(channel, (_event, payload) => fn(payload));
 }
 
+// How much the window is zoomed (Clawd's size on this screen), from main.
+const scaleArg = process.argv.find((a) => a.startsWith('--clawd-scale='));
+const scale = scaleArg ? Number(scaleArg.split('=')[1]) || 1 : 1;
+
 contextBridge.exposeInMainWorld('clawd', {
+  scale,
   readSvg: (name) => {
     if (!/^[a-z0-9-]+$/.test(name)) throw new Error(`bad sprite name: ${name}`);
     return fs.readFileSync(path.join(SVG_DIR, `${name}.svg`), 'utf8');

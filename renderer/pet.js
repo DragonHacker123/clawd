@@ -5,6 +5,8 @@
   const api = window.clawd;
   const stage = document.getElementById('stage');
   const bubble = document.getElementById('bubble');
+  // When Clawd is shrunk to fit a small screen, keep the bubble text readable (~10 px on screen).
+  if (api.scale < 1) bubble.style.fontSize = `${Math.min(16, 10 / api.scale).toFixed(1)}px`;
 
   // Activity names sent by the main process -> SVG animation.
   const ACTIVITY = {

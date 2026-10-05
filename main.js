@@ -4,17 +4,17 @@ const fs = require('fs');
 const { startServer } = require('./src/server');
 const { Brain } = require('./src/brain');
 const { OutfitMaker } = require('./src/outfits');
-const { Surfaces, FEET_Y } = require('./src/surfaces');
 const { Foreground } = require('./src/foreground');
-const { Pet, SIZE } = require('./src/pet');
-const { Flock } = require('./src/flock');
+const geometry = require('./src/geometry');
+// Everything that depends on Clawd's size is loaded once the screen is known (see app.whenReady).
+let Surfaces, FEET_Y, Pet, SIZE, Flock;
 
 let tray;
 let brain;
 let surfaces;
 let flock;
 let foreground;
-let fgState = { fg: 'claude', claude: null, above: [], available: false };
+let fgState = { fg: 'claude', claude: null, above: [], tray: null, available: false };
 let hiddenByUser = false;
 
 if (!app.requestSingleInstanceLock()) {
@@ -26,7 +26,7 @@ app.commandLine.appendSwitch('disable-background-timer-throttling');
 // ---------- persisted settings ----------
 
 const statePath = () => path.join(app.getPath('userData'), 'state.json');
-const defaults = { x: null, y: null, outfits: true, onlyWhileWorking: false, openAtLogin: true, gravity: true, onlyInClaude: true, ignoreCwds: [] };
+const defaults = { x: null, y: null, outfits: true, onlyWhileWorking: false, openAtLogin: true, gravity: true, onlyInClaude: true, sizeScale: 1, ignoreCwds: [] };
 let state = { ...defaults };
 
 function loadState() {
@@ -63,16 +63,33 @@ process.on('unhandledRejection', (err) => log(`unhandled rejection: ${err && err
 
 // Standing on the taskbar, bottom-left.
 function defaultPosition() {
-  const { workArea } = screen.getPrimaryDisplay();
-  return { x: workArea.x + 20, y: Math.round(workArea.y + workArea.height - FEET_Y) };
+  const display = screen.getPrimaryDisplay();
+  return { x: display.workArea.x + 20, y: Math.round(floorY(display) - FEET_Y) };
 }
 
 function clampToScreen(x, y) {
-  const { workArea, bounds } = screen.getDisplayMatching({ x, y, width: SIZE, height: SIZE });
+  const display = screen.getDisplayMatching({ x, y, width: SIZE, height: SIZE });
+  const { workArea, bounds } = display;
   return {
     x: Math.min(Math.max(x, workArea.x), workArea.x + workArea.width - SIZE),
-    y: Math.min(Math.max(y, bounds.y - 60), Math.round(workArea.y + workArea.height - FEET_Y)),
+    y: Math.min(Math.max(y, bounds.y - 60), Math.round(floorY(display) - FEET_Y)),
   };
+}
+
+// Top of the taskbar on this display, from Windows' own taskbar window. Unlike
+// the work area it still counts when the taskbar auto-hides (it slides back up
+// over whatever is at the bottom of the screen), so he never stands where it
+// will pop up.
+function floorY(display) {
+  const wa = display.workArea;
+  let y = wa.y + wa.height;
+  const t = fgState.tray;
+  if (t && t.width >= display.bounds.width * 0.6 && t.height < display.bounds.height / 3
+      && t.y >= display.bounds.y + display.bounds.height / 2 - 4 && t.x < display.bounds.x + display.bounds.width
+      && t.x + t.width > display.bounds.x) {
+    y = Math.min(y, display.bounds.y + display.bounds.height - t.height);
+  }
+  return Math.round(y);
 }
 
 // Where Clawd may be: inside the Claude app's window when "only in Claude" is
@@ -81,14 +98,19 @@ function clampToScreen(x, y) {
 function world() {
   const c = fgState.claude;
   if (state.onlyInClaude && c && !c.min) {
-    const wa = screen.getDisplayMatching(c).workArea;
-    const floorY = Math.min(c.y + c.height, wa.y + wa.height);
-    return { x0: c.x, x1: c.x + c.width, top: c.y, floor: { y: floorY, x0: c.x, x1: c.x + c.width, kind: 'floor' } };
+    const bottom = Math.min(c.y + c.height, floorY(screen.getDisplayMatching(c)));
+    return { x0: c.x, x1: c.x + c.width, top: c.y, floor: { y: bottom, x0: c.x, x1: c.x + c.width, kind: 'floor' } };
   }
   const lead = flock && flock.primary;
   const b = lead && lead.win ? lead.win.getBounds() : { x: 0, y: 0, width: SIZE, height: SIZE };
-  const wa = screen.getDisplayMatching(b).workArea;
-  return { x0: wa.x, x1: wa.x + wa.width, top: wa.y, floor: { y: wa.y + wa.height, x0: wa.x, x1: wa.x + wa.width, kind: 'taskbar' } };
+  const display = screen.getDisplayMatching(b);
+  const wa = display.workArea;
+  return { x0: wa.x, x1: wa.x + wa.width, top: wa.y, floor: { y: floorY(display), x0: wa.x, x1: wa.x + wa.width, kind: 'taskbar' } };
+}
+
+function logDisplays(why) {
+  const list = screen.getAllDisplays().map((d) => `#${d.id} bounds=${JSON.stringify(d.bounds)} work=${JSON.stringify(d.workArea)} dpi=${d.scaleFactor}${d.id === screen.getPrimaryDisplay().id ? ' primary' : ''}`);
+  log(`displays (${why}): ${list.join(' | ')} tray=${JSON.stringify(fgState.tray)}`);
 }
 
 function refreshVisibility() {
@@ -106,6 +128,12 @@ function onForeground(next) {
     }
   }
   refreshVisibility();
+}
+
+function relaunch(why) {
+  log(`restarting: ${why}`);
+  app.relaunch();
+  app.exit(0);
 }
 
 // ---------- tray / context menu ----------
@@ -189,6 +217,19 @@ function buildMenu() {
         applyLoginItem();
       },
     },
+    {
+      label: 'Size',
+      submenu: [['Smaller', 0.8], ['Normal (fits your screen)', 1], ['Larger', 1.25]].map(([label, v]) => ({
+        label,
+        type: 'radio',
+        checked: (state.sizeScale || 1) === v,
+        click: () => {
+          state.sizeScale = v;
+          saveState();
+          relaunch('size changed');
+        },
+      })),
+    },
     { type: 'separator' },
     { label: 'Open outfits folder', click: () => shell.openPath(path.join(app.getPath('userData'), 'outfits')) },
     { label: 'Show chat extension file', click: () => shell.showItemInFolder(path.join(__dirname, 'dist', 'clawd.mcpb')) },
@@ -256,6 +297,11 @@ app.on('second-instance', () => {
 app.whenReady().then(() => {
   log('starting');
   loadState();
+  const scale = geometry.init(state.sizeScale || 1);
+  ({ Surfaces, FEET_Y } = require('./src/surfaces'));
+  ({ Pet, SIZE } = require('./src/pet'));
+  ({ Flock } = require('./src/flock'));
+  logDisplays(`size scale ${scale} (user x${state.sizeScale || 1})`);
   createTray();
   applyLoginItem();
 
@@ -307,6 +353,11 @@ app.whenReady().then(() => {
   };
   const settleNow = () => lead().physics.settle();
   // Same as letting go of a drag at window position (x, y), optionally thrown.
+  // Put him somewhere without any checks (to test that the floor guard rescues him).
+  const teleport = ({ x, y }) => {
+    const p = lead();
+    if (p && p.win) p.win.setPosition(Math.round(x), Math.round(y));
+  };
   const dropAt = ({ x, y, vx = 0, vy = 0 }) => {
     const p = lead();
     if (!p || !p.win) return;
@@ -360,7 +411,7 @@ app.whenReady().then(() => {
     lead().interactive = null;
     return { ok: true };
   };
-  startServer(brain, { snap, input, surfacesDebug, settleNow, dropAt, physicsState, clicks, forceInteractive, pets, pageState, heal })
+  startServer(brain, { teleport, snap, input, surfacesDebug, settleNow, dropAt, physicsState, clicks, forceInteractive, pets, pageState, heal })
     .catch((err) => console.error('event server failed', err));
 
   foreground = new Foreground({
@@ -379,7 +430,23 @@ app.whenReady().then(() => {
   setInterval(refreshVisibility, 500);
   setInterval(() => { for (const p of flock.pets) p.hitTest(); }, 30);
   setInterval(() => { for (const p of flock.pets) p.probeCover(foreground); }, 800);
+  setInterval(() => { for (const p of flock.pets) p.guardFloor(); }, 700);
 
+  // A new monitor, docking, or a change of display scaling: keep everyone on
+  // screen, and if the screen is now a very different size, restart so Clawd
+  // is resized to fit it.
+  let metricsTimer = null;
+  const onMetrics = () => {
+    clearTimeout(metricsTimer);
+    metricsTimer = setTimeout(() => {
+      logDisplays('changed');
+      const want = geometry.computeScale(state.sizeScale || 1);
+      if (Math.abs(want - geometry.scale) >= 0.1) return relaunch(`screen resized, scale ${geometry.scale} -> ${want}`);
+      for (const p of flock.pets) p.rehome();
+    }, 1500);
+  };
+  screen.on('display-metrics-changed', onMetrics);
+  screen.on('display-added', onMetrics);
   screen.on('display-removed', () => {
     for (const p of flock.pets) {
       const [x, y] = p.position();

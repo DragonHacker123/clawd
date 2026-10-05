@@ -7,9 +7,10 @@
 // box, a card, a button row, a window's title bar — plus the top of the taskbar
 // from Windows' own work-area geometry. His feet go exactly on the line.
 const { desktopCapturer, screen } = require('electron');
+const geometry = require('./geometry');
 
-// Geometry of Clawd inside his 150px window (viewBox -15 -25 45 45).
-const UNIT = 150 / 45;
+// Geometry of Clawd inside his window (viewBox -15 -25 45 45), 150 px at scale 1.
+const UNIT = (150 * geometry.scale) / 45;
 const FEET_Y = (15 + 25) * UNIT; // bottom of his legs (viewBox y=15) ≈ 133.3px
 const FEET_L = (3 + 15) * UNIT; // outer left leg (viewBox x=3) = 60px
 const FEET_R = (12 + 15) * UNIT; // outer right leg ends (viewBox x=12) = 90px

@@ -32,7 +32,7 @@ class Foreground {
     this.onAppCpu = onAppCpu || (() => {});
     this.onInput = onInput || (() => {});
     this.log = log || (() => {});
-    this.state = { fg: 'claude', claude: null, above: [], available: false };
+    this.state = { fg: 'claude', claude: null, above: [], tray: null, available: false };
     this.probes = new Map();
     this.probeId = 0;
     this.start();
@@ -78,7 +78,8 @@ class Foreground {
         claude = { ...toDip({ x: msg.claude.x, y: msg.claude.y, width: msg.claude.w, height: msg.claude.h }), min: msg.claude.min };
       }
       const above = (msg.above || []).map(([x, y, width, height]) => toDip({ x, y, width, height }));
-      this.state = { fg: msg.fg, claude, above, available: true };
+      const tray = Array.isArray(msg.tray) ? toDip({ x: msg.tray[0], y: msg.tray[1], width: msg.tray[2], height: msg.tray[3] }) : null;
+      this.state = { fg: msg.fg, claude, above, tray, available: true };
       this.onChange(this.state);
     });
   }

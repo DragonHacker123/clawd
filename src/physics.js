@@ -5,19 +5,23 @@
 // below that and span FEET_L..FEET_R. "Lines" are surfaces from surfaces.js:
 // { y, x0, x1 } — his feet rest on y.
 const { FEET_Y, FEET_L, FEET_R } = require('./surfaces');
+const geometry = require('./geometry');
+
+const S = geometry.scale;
+const SIZE = Math.round(150 * S);
 
 const G = 2600; // px/s²
 const MAX_FALL = 2600; // px/s terminal velocity
 const MAX_THROW = 2200; // px/s
 const AIR_DRAG = 0.55; // fraction of horizontal speed kept per second in the air
-const WALK_SPEED = 26; // px/s
-const SCRAMBLE_SPEED = 55; // px/s, backing away from an edge
+const WALK_SPEED = 26 * S; // px/s
+const SCRAMBLE_SPEED = 55 * S; // px/s, backing away from an edge
 const HARD_LANDING = 1000; // px/s impact: lands angry (≈ a 190 px fall)
 const LEDGE_GRAB = 20; // px: a line this far above his feet at release catches him
-const TEETER_ZONE = 8; // px: centre this close to an edge = wobbling
+const TEETER_ZONE = 8 * S; // px: centre this close to an edge = wobbling
 const TICK_MS = 16;
 const CENTER = (FEET_L + FEET_R) / 2;
-const HEAD_TOP = 75; // px from the window top to the top of his head
+const HEAD_TOP = 75 * S; // px from the window top to the top of his head
 const HALF_FEET = (FEET_R - FEET_L) / 2;
 
 class Physics {
@@ -88,7 +92,7 @@ class Physics {
   }
 
   bounds() {
-    return { x: Math.round(this.x), y: Math.round(this.y), width: 150, height: 150 };
+    return { x: Math.round(this.x), y: Math.round(this.y), width: SIZE, height: SIZE };
   }
 
   motion(mode, extra = {}) {
@@ -214,8 +218,8 @@ class Physics {
       this.vx = -this.vx * 0.35;
     }
     // Ceiling: let the empty top of the window poke out, not his head.
-    if (this.y < w.top - 60) {
-      this.y = w.top - 60;
+    if (this.y < w.top - 60 * S) {
+      this.y = w.top - 60 * S;
       this.vy = Math.max(0, this.vy);
     }
 

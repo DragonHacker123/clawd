@@ -5,6 +5,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const crypto = require('crypto');
 const { app } = require('electron');
 
@@ -12,15 +13,47 @@ const PORT = 47321;
 // PostToolUse payloads carry whole tool results (file contents), so allow big bodies.
 const MAX_BODY = 32 * 1024 * 1024;
 
-function loadToken() {
-  const file = path.join(app.getPath('userData'), 'token.txt');
+// The Claude desktop app is an MSIX package: anything running inside it (the
+// Claude Code hooks installer, the chat extension, a Clawd started from a
+// Claude Code session) has its AppData\Roaming files redirected to the
+// package's private LocalCache. So there can be two token.txt files: ours and
+// the package's copy. Everyone must agree on one: prefer the copy the
+// package's processes already use (the hooks have it baked in), and make sure
+// both places hold it.
+function packageTokenFiles() {
+  const base = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Packages');
+  const name = path.basename(app.getPath('userData'));
+  try {
+    return fs.readdirSync(base)
+      .filter((n) => /^Claude_/i.test(n))
+      .map((n) => path.join(base, n, 'LocalCache', 'Roaming', name, 'token.txt'));
+  } catch {
+    return [];
+  }
+}
+
+function readToken(file) {
   try {
     const token = fs.readFileSync(file, 'utf8').trim();
-    if (token.length >= 32) return token;
+    return token.length >= 32 ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeToken(file, token) {
+  try {
+    if (readToken(file) === token) return;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, token);
   } catch {}
-  const token = crypto.randomBytes(24).toString('hex');
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, token);
+}
+
+function loadToken() {
+  const own = path.join(app.getPath('userData'), 'token.txt');
+  const copies = packageTokenFiles();
+  const token = copies.map(readToken).find(Boolean) || readToken(own) || crypto.randomBytes(24).toString('hex');
+  for (const file of [own, ...copies]) writeToken(file, token);
   return token;
 }
 

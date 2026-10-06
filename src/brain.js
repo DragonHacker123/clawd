@@ -3,11 +3,15 @@
 // most recently typed into, and only falls back to another busy session when
 // that one goes quiet.
 const path = require('path');
-const fsp = require('fs').promises;
+const fs = require('fs');
+const fsp = fs.promises;
 const { sanitizeOutfit } = require('./outfits');
 
 const STALE_MS = 10 * 60 * 1000;
 const MIN_TOPIC_PROMPT = 15;
+// A session counts as open (and gets its own Clawd) this long after its last sign of life.
+const OPEN_MS = 45 * 60 * 1000;
+const OUTFIT_MEMORY_DAYS = 14;
 const CHAT_BUSY_MS = 2 * 60 * 1000; // after a topic/mood call
 const CHAT_WORK_MS = 10 * 60 * 1000; // after "working", unless "done" comes first
 const LONG_TASK_MS = 90 * 1000; // busy this long on one prompt: he sits down
@@ -100,8 +104,62 @@ async function ultraMarker(file, from, size) {
   }
 }
 
+// Who a transcript belongs to: cwd, entrypoint, and whether it's a scheduled
+// task (their first prompt starts with <scheduled-task ...>).
+async function transcriptInfo(file) {
+  const fh = await fsp.open(file, 'r');
+  try {
+    const { size } = await fh.stat();
+    const head = await readSlice(fh, 0, Math.min(size, 256 * 1024));
+    const tail = await readSlice(fh, Math.max(0, size - 64 * 1024), size);
+    const cwd = (tail.match(/"cwd":"((?:[^"\\]|\\.)*)"/g) || []).pop();
+    const entry = (tail.match(/"entrypoint":"([^"]*)"/) || [])[1] || '';
+    return {
+      cwd: cwd ? JSON.parse(cwd.slice(6)) : '',
+      entrypoint: entry,
+      background: /"content":"\s*<scheduled-task\b/.test(head) || /"content":\[\{"type":"text","text":"\s*<scheduled-task\b/.test(head),
+    };
+  } finally {
+    await fh.close();
+  }
+}
+
+// The newest thing you typed in a transcript (not tool results or reminders).
+async function lastUserPrompt(file) {
+  try {
+    const fh = await fsp.open(file, 'r');
+    try {
+      const { size } = await fh.stat();
+      for (let back = 512 * 1024; ; back *= 4) {
+        const text = await readSlice(fh, Math.max(0, size - back), size);
+        const lines = text.split('\n').reverse();
+        for (const line of lines) {
+          if (!line.includes('"type":"user"') || line.includes('"tool_result"') || line.includes('"isMeta":true')) continue;
+          let msg;
+          try {
+            msg = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          const c = msg && msg.message && msg.message.content;
+          const text = typeof c === 'string' ? c : Array.isArray(c) ? c.filter((p) => p.type === 'text').map((p) => p.text).join(' ') : '';
+          const clean = text.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, ' ').trim();
+          if (clean.length >= MIN_TOPIC_PROMPT && !clean.startsWith('/')) return clean.slice(0, 2000);
+        }
+        if (back >= size || back > 32 * 1024 * 1024) return null;
+      }
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
 class Brain {
-  constructor({ send, outfits, settings, onBusyChange, onPosture = () => {} }) {
+  constructor({ send, outfits, settings, onBusyChange, onPosture = () => {}, memoryFile = null }) {
+    this.memoryFile = memoryFile; // outfits per session, so a restart doesn't undress everyone
+    this.memory = this.loadMemory();
     this.onPosture = onPosture;
     this.sitting = false;
     setInterval(() => {
@@ -132,7 +190,13 @@ class Brain {
 
   session(id, cwd) {
     if (!this.sessions.has(id)) {
-      this.sessions.set(id, { id, cwd, busy: false, background: false, activity: null, lastEvent: 0, lastPrompt: 0, outfit: null, outfitAsked: false });
+      const s = { id, cwd, busy: false, background: false, activity: null, lastEvent: 0, lastPrompt: 0, outfit: null, outfitAsked: false, fresh: true };
+      const saved = this.memory[id];
+      if (saved && saved.outfit) {
+        s.outfit = { ...saved.outfit, assignedAt: ++this.outfitSeq };
+        s.outfitAsked = true;
+      }
+      this.sessions.set(id, s);
     }
     return this.sessions.get(id);
   }
@@ -202,6 +266,10 @@ class Brain {
         break;
     }
     if (ev.transcript_path) s.transcriptPath = String(ev.transcript_path);
+    if (s.fresh) {
+      s.fresh = false;
+      if (ev.hook_event_name !== 'UserPromptSubmit') this.dressFromTranscript(s);
+    }
     s.ultra = !!(s.ultraSession || s.ultraTurn);
     this.checkUltra(s, ev.hook_event_name === 'UserPromptSubmit');
     this.refocus();
@@ -250,6 +318,12 @@ class Brain {
     if (focus && focus.busy) return;
     const busy = [...this.sessions.values()].filter((s) => s.busy && !s.background).sort((a, b) => b.lastPrompt - a.lastPrompt);
     if (busy.length) this.focusId = busy[0].id;
+    // Nothing busy and no (live) focus, e.g. just after a restart: the main
+    // Clawd takes the most recently active open session.
+    else if (!focus) {
+      const open = [...this.sessions.values()].filter((x) => !x.background).sort((a, b) => b.lastEvent - a.lastEvent);
+      if (open.length) this.focusId = open[0].id;
+    }
   }
 
   maybeDress(s, text) {
@@ -322,7 +396,87 @@ class Brain {
 
   dress(s, outfit) {
     s.outfit = { ...outfit, assignedAt: ++this.outfitSeq };
+    this.memory[s.id] = { outfit, at: Date.now() };
+    this.saveMemory();
     this.publish();
+  }
+
+  loadMemory() {
+    if (!this.memoryFile) return {};
+    try {
+      const all = JSON.parse(fs.readFileSync(this.memoryFile, 'utf8'));
+      const cutoff = Date.now() - OUTFIT_MEMORY_DAYS * 24 * 60 * 60 * 1000;
+      return Object.fromEntries(Object.entries(all).filter(([, v]) => v && v.at > cutoff));
+    } catch {
+      return {};
+    }
+  }
+
+  saveMemory() {
+    if (!this.memoryFile) return;
+    try {
+      fs.mkdirSync(path.dirname(this.memoryFile), { recursive: true });
+      fs.writeFileSync(this.memoryFile, JSON.stringify(this.memory));
+    } catch {}
+  }
+
+  // A session seen for the first time mid-conversation (e.g. after Clawd
+  // restarted) has no prompt to dress for: use its latest one from the transcript.
+  async dressFromTranscript(s) {
+    if (s.outfitAsked || !s.transcriptPath || !this.settings().outfits) return;
+    const prompt = await lastUserPrompt(s.transcriptPath);
+    if (prompt && !s.outfitAsked) this.maybeDress(s, prompt);
+  }
+
+  // At startup: sessions whose transcript changed recently are probably open
+  // in the app (maybe side by side), so they get their Clawds straight away
+  // instead of when they next do something. Idle until they send an event.
+  async discover(projectsDir, withinMs = OPEN_MS) {
+    let dirs;
+    try {
+      dirs = await fsp.readdir(projectsDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    const now = Date.now();
+    for (const d of dirs) {
+      if (!d.isDirectory()) continue;
+      let files;
+      try {
+        files = await fsp.readdir(path.join(projectsDir, d.name));
+      } catch {
+        continue;
+      }
+      for (const f of files) {
+        if (!f.endsWith('.jsonl')) continue;
+        const file = path.join(projectsDir, d.name, f);
+        const id = f.slice(0, -6);
+        if (this.sessions.has(id)) continue;
+        try {
+          const st = await fsp.stat(file);
+          if (now - st.mtimeMs > withinMs) continue;
+          const info = await transcriptInfo(file);
+          if (!info || info.background) continue;
+          if (this.ignored({ cwd: info.cwd }, { entrypoint: info.entrypoint })) continue;
+          const s = this.session(id, info.cwd);
+          s.transcriptPath = file;
+          s.lastEvent = st.mtimeMs;
+          s.fresh = false;
+          this.checkUltra(s, true);
+          this.dressFromTranscript(s);
+        } catch {}
+      }
+    }
+    this.refocus();
+    this.publish();
+  }
+
+  // Sessions open right now: each gets a Clawd (busy or not).
+  openSessions() {
+    const t = Date.now();
+    return [...this.sessions.values()]
+      .filter((s) => !s.background && (s.busy || t - s.lastEvent < OPEN_MS))
+      .sort((a, b) => b.lastPrompt - a.lastPrompt || b.lastEvent - a.lastEvent);
   }
 
   // He wears the outfit of whichever conversation most recently got one.
@@ -389,7 +543,7 @@ class Brain {
       this.shown.activity = activity;
       this.send('activity', activity);
     }
-    const outfit = this.currentOutfit();
+    const outfit = (focus && focus.outfit) || null;
     const outfitId = outfit ? outfit.id : null;
     if (outfitId !== this.shown.outfitId) {
       if (outfit && this.shown.outfitId !== undefined) this.send('flash', { state: 'wizard', ms: 2200 });

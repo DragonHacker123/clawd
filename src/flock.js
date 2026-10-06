@@ -81,7 +81,8 @@ class Flock {
     if (!brain) return;
     const now = Date.now();
     const focusId = brain.focusId;
-    const active = brain.activeSessions().filter((s) => s.id !== focusId).slice(0, MAX_EXTRA);
+    // Every open session gets a Clawd (sleeping if it's idle), not just busy ones.
+    const active = brain.openSessions().filter((s) => s.id !== focusId).slice(0, MAX_EXTRA);
     const activeIds = new Set(active.map((s) => s.id));
 
     // If you switched to a session that has its own Clawd, the primary now
@@ -128,7 +129,7 @@ class Flock {
 
   // Push one session's state to its Clawd (only what changed).
   show(pet, s, now) {
-    const activity = s.activity || null;
+    const activity = (s.busy && s.activity) || null;
     if (activity !== pet.shownActivity) {
       pet.shownActivity = activity;
       pet.send('activity', activity);

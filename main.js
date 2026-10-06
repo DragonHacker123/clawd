@@ -335,7 +335,10 @@ app.whenReady().then(() => {
     settings: () => state,
     onBusyChange: () => refreshVisibility(),
     onPosture: (sit) => flock.primary && flock.primary.send('posture', sit ? 'sit' : 'stand'),
+    memoryFile: path.join(app.getPath('userData'), 'session-outfits.json'),
   });
+  // Sessions already open in the app get their Clawds now, not on their next event.
+  brain.discover(path.join(require('os').homedir(), '.claude', 'projects'));
 
   // ---------- debug routes (localhost + token only), acting on the primary Clawd ----------
   const lead = () => flock.primary;

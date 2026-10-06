@@ -77,12 +77,10 @@ test('ultracode markers in a transcript', () => {
   assert.equal(ultraFromText('{"type":"assistant","effort":"xhigh","perTurnEffort":"xhigh"}'), null);
 });
 
-test('ultracode keyword -> hyper for that turn', () => {
+test('talking about ultracode does not make him hyper', () => {
   const { ev, last } = makeBrain();
-  ev('a', 'UserPromptSubmit', { prompt: 'ultracode: rebuild the parser' });
-  assert.equal(last('hyper'), true);
-  ev('a', 'Stop');
-  assert.equal(last('hyper'), false);
+  ev('a', 'UserPromptSubmit', { prompt: 'why is he acting like ultracode is on?' });
+  assert.equal(!!last('hyper'), false);
 });
 
 test('prompt -> thinking, tool -> typing, stop -> happy + idle', () => {

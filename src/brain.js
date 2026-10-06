@@ -222,7 +222,6 @@ class Brain {
     switch (ev.hook_event_name) {
       case 'UserPromptSubmit': {
         const prompt = String(ev.prompt || '');
-        s.ultraTurn = /\bultracode\b/i.test(prompt); // the keyword turns it on for this turn
         if (!s.busy) s.busySince = t;
         s.busy = true;
         s.lastPrompt = t;
@@ -250,13 +249,11 @@ class Brain {
         break;
       case 'Stop':
         s.busy = false;
-        s.ultraTurn = false;
         s.activity = null;
         if (this.isFocus(s)) this.send('flash', { state: 'happy', ms: 2600 });
         break;
       case 'StopFailure':
         s.busy = false;
-        s.ultraTurn = false;
         s.activity = null;
         if (this.isFocus(s)) this.send('flash', { state: 'error', ms: 3000 });
         break;
@@ -309,10 +306,11 @@ class Brain {
   }
 
   // Ultracode: the app's switch when it knows the session, otherwise the
-  // CLI's transcript markers; the "ultracode" keyword counts for its turn.
+  // CLI's transcript markers.
   ultraOf(s) {
     const app = this.appUltra(s.id);
-    return !!(s.ultraTurn || (app === undefined ? s.ultraSession : app));
+    // (Not the word "ultracode" in a prompt: talking about it would set him off.)
+    return !!(app === undefined ? s.ultraSession : app);
   }
 
   // The app's switch changed (no hook event for that): re-check everyone.

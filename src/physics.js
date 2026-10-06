@@ -187,6 +187,7 @@ class Physics {
     this.lines = null;
     this.checkedFeetY = this.feetY();
     this.startFeetY = this.feetY();
+    this.peakFeetY = this.feetY(); // highest point so far (smallest y)
     // A flip turns him the way he's travelling (backwards, for a backflip).
     const flip = flipMs ? { deg: vx < 0 ? -360 : 360, ms: Math.round(flipMs) } : null;
     this.flipUntil = flip ? Date.now() + flip.ms : 0;
@@ -200,6 +201,9 @@ class Physics {
       const boxes = this.boxes();
       const inside = (l) => boxes.some((b) => l.y > b.top + 2 && l.y <= b.bottom + 2 && l.x1 > b.x0 && l.x0 < b.x1);
       this.lines = lines.filter((l) => l.kind === 'floor' || l.kind === 'taskbar' || !inside(l));
+      // The scan can land after he's gone over the top of his jump and past a
+      // ledge on the way down: check everything from the highest point he reached.
+      this.checkedFeetY = Math.min(this.checkedFeetY, this.peakFeetY);
       if (ledgeGrab) {
         // Dropped just below a ledge: he grabs it and pulls himself up.
         const c = this.center();
@@ -268,6 +272,7 @@ class Physics {
     }
 
     const feet = this.feetY();
+    this.peakFeetY = Math.min(this.peakFeetY, feet);
     if (this.vy > 0) {
       // Never fall through the floor, even before the scan arrives.
       const floor = w.floor;
@@ -276,7 +281,11 @@ class Physics {
       const from = Math.min(this.checkedFeetY, prevFeet);
       const c = this.center();
       // Skip the ledge he was just knocked off (it's moving up past him).
+      const boxes = this.boxes();
+      const inBox = (l) => l.kind !== 'floor' && l.kind !== 'taskbar' && l.kind !== 'pet'
+        && boxes.some((b) => l.y > b.top + 2 && l.y <= b.bottom + 2 && c > b.x0 && c < b.x1);
       const hit = candidates
+        .filter((l) => !inBox(l))
         .filter((l) => this.ignoreY === null || Math.abs(l.y - this.ignoreY) > 12 || l.y > this.ignoreY + 12)
         .filter((l) => l.y >= from - 0.5 && l.y <= feet && (c >= l.x0 || l.hiddenLeft) && (c <= l.x1 || l.hiddenRight))
         .sort((a, b) => a.y - b.y)[0];

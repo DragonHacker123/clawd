@@ -157,7 +157,9 @@ async function lastUserPrompt(file) {
 }
 
 class Brain {
-  constructor({ send, outfits, settings, onBusyChange, onPosture = () => {}, memoryFile = null }) {
+  constructor({ send, outfits, settings, onBusyChange, onPosture = () => {}, memoryFile = null, visible = () => null }) {
+    // Sessions on screen in the app (a Set of ids), or null when unknown.
+    this.visible = visible;
     this.memoryFile = memoryFile; // outfits per session, so a restart doesn't undress everyone
     this.memory = this.loadMemory();
     this.onPosture = onPosture;
@@ -314,14 +316,20 @@ class Brain {
   // Stay on the session you last typed into while it's busy; otherwise follow
   // the busiest recent session; otherwise keep the last one (for its outfit).
   refocus() {
-    const focus = this.sessions.get(this.focusId);
+    const shown = this.visible();
+    const onScreen = (s) => !shown || shown.has(s.id) || s.id === 'chat';
+    let focus = this.sessions.get(this.focusId);
+    if (focus && !onScreen(focus)) {
+      this.focusId = null;
+      focus = null;
+    }
     if (focus && focus.busy) return;
-    const busy = [...this.sessions.values()].filter((s) => s.busy && !s.background).sort((a, b) => b.lastPrompt - a.lastPrompt);
+    const busy = [...this.sessions.values()].filter((s) => s.busy && !s.background && onScreen(s)).sort((a, b) => b.lastPrompt - a.lastPrompt);
     if (busy.length) this.focusId = busy[0].id;
     // Nothing busy and no (live) focus, e.g. just after a restart: the main
     // Clawd takes the most recently active open session.
     else if (!focus) {
-      const open = [...this.sessions.values()].filter((x) => !x.background).sort((a, b) => b.lastEvent - a.lastEvent);
+      const open = [...this.sessions.values()].filter((x) => !x.background && onScreen(x)).sort((a, b) => b.lastEvent - a.lastEvent);
       if (open.length) this.focusId = open[0].id;
     }
   }
@@ -471,11 +479,41 @@ class Brain {
     this.publish();
   }
 
+  // The app's layout changed: sessions now on screen that we haven't heard
+  // from get created from their transcripts (idle until they do something).
+  async adoptVisible(projectsDir, info = new Map()) {
+    const shown = this.visible();
+    if (!shown) return;
+    for (const id of shown) {
+      if (this.sessions.has(id)) continue;
+      let file = null;
+      try {
+        for (const d of await fsp.readdir(projectsDir)) {
+          const f = path.join(projectsDir, d, id + '.jsonl');
+          if (fs.existsSync(f)) {
+            file = f;
+            break;
+          }
+        }
+      } catch {}
+      const s = this.session(id, (info.get(id) || {}).cwd || '');
+      s.fresh = false;
+      if (file) {
+        s.transcriptPath = file;
+        this.checkUltra(s, true);
+        this.dressFromTranscript(s);
+      }
+    }
+    this.refocus();
+    this.publish();
+  }
+
   // Sessions open right now: each gets a Clawd (busy or not).
   openSessions() {
     const t = Date.now();
+    const shown = this.visible();
     return [...this.sessions.values()]
-      .filter((s) => !s.background && (s.busy || t - s.lastEvent < OPEN_MS))
+      .filter((s) => !s.background && (shown ? shown.has(s.id) || (s.id === 'chat' && s.busy) : s.busy || t - s.lastEvent < OPEN_MS))
       .sort((a, b) => b.lastPrompt - a.lastPrompt || b.lastEvent - a.lastEvent);
   }
 

@@ -6,6 +6,7 @@ const { Brain } = require('./src/brain');
 const { OutfitMaker } = require('./src/outfits');
 const { Foreground } = require('./src/foreground');
 const geometry = require('./src/geometry');
+const { AppLayout } = require('./src/appLayout');
 // Everything that depends on Clawd's size is loaded once the screen is known (see app.whenReady).
 let Surfaces, FEET_Y, Pet, SIZE, Flock;
 
@@ -328,6 +329,8 @@ app.whenReady().then(() => {
   const start = state.x === null ? defaultPosition() : clampToScreen(state.x, state.y);
   flock.add(new Pet(ctx, { x: start.x, y: start.y, primary: true }));
 
+  // Which sessions are on screen in the app: only those get Clawds.
+  const appLayout = new AppLayout({ log });
   const outfits = new OutfitMaker(path.join(app.getPath('userData'), 'outfits'));
   brain = new Brain({
     send: (channel, payload) => flock.primary && flock.primary.send(channel, payload),
@@ -336,9 +339,12 @@ app.whenReady().then(() => {
     onBusyChange: () => refreshVisibility(),
     onPosture: (sit) => flock.primary && flock.primary.send('posture', sit ? 'sit' : 'stand'),
     memoryFile: path.join(app.getPath('userData'), 'session-outfits.json'),
+    visible: () => appLayout.visible,
   });
   // Sessions already open in the app get their Clawds now, not on their next event.
-  brain.discover(path.join(require('os').homedir(), '.claude', 'projects'));
+  const projectsDir = path.join(require('os').homedir(), '.claude', 'projects');
+  brain.discover(projectsDir).then(() => brain.adoptVisible(projectsDir, appLayout.info));
+  appLayout.onChange = () => brain.adoptVisible(projectsDir, appLayout.info);
 
   // ---------- debug routes (localhost + token only), acting on the primary Clawd ----------
   const lead = () => flock.primary;

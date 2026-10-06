@@ -11,7 +11,12 @@ foreach ($p in $procs) {
 Get-Process fgwatch -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 800
 if ($args -notcontains '-StopOnly') {
-  Start-Process -FilePath $exe -ArgumentList "`"$root`"" -WorkingDirectory $root
+  # Launch through WMI so Clawd isn't a child of whatever ran this script. Run from
+  # a Claude Code session, Start-Process would put him in the Claude app's job
+  # object, and he'd be killed whenever the app restarts or updates.
+  $cmd = "`"$exe`" `"$root`""
+  $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd; CurrentDirectory = $root }
+  if ($r.ReturnValue -ne 0) { Start-Process -FilePath $exe -ArgumentList "`"$root`"" -WorkingDirectory $root }
   Start-Sleep -Seconds 4
   Write-Output "restarted"
 }

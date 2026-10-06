@@ -10,6 +10,7 @@ const { FEET_Y } = require('./surfaces');
 const S = require('./geometry').scale;
 
 const MAX_EXTRA = 3;
+const CLOSED_PANE_MS = 2000;
 const LINGER_MS = 40 * 1000; // an extra Clawd hangs around this long after his task ends
 const LONG_TASK_MS = 90 * 1000; // busy this long: he sits down to work
 const SOCIAL_COOLDOWN_MS = 20 * 1000;
@@ -114,7 +115,9 @@ class Flock {
         pet.send('posture', 'stand');
         pet.send('flash', { state: 'happy', ms: 2400 });
         if (s && s.outfit) pet.send('outfit', s.outfit);
-      } else if (now - pet.idleSince > LINGER_MS) {
+      } else if (now - pet.idleSince > (brain.visible() ? CLOSED_PANE_MS : LINGER_MS)) {
+        // Following the app's layout, no session means his pane was closed:
+        // a quick wave and off he goes. Otherwise he lingers after his task.
         this.leave(pet);
       }
     }

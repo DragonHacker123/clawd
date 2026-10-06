@@ -48,6 +48,7 @@ class Pet {
       surfaces: ctx.surfaces,
       send: (ch, p) => this.send(ch, p),
       isShown: () => this.shown,
+      boxes: () => (this.shown ? ctx.surfaces.boxes(ctx.world()) : []),
       settings: () => ctx.state,
       world: ctx.world,
       heads: () => ctx.flock.headsExcept(this),
@@ -376,6 +377,10 @@ class Pet {
   // him land again.
   guardFloor() {
     if (!this.win || this.win.isDestroyed() || this.closing || !this.ctx.state.gravity) return;
+    if (this.shown && this.physics.escapeBox()) {
+      this.ctx.log(`box: Clawd ${this.id} was inside a box; hopping onto it`);
+      return;
+    }
     const ph = this.physics;
     if (ph.mode === 'held') return;
     if (ph.mode === 'climb') return; // turned sideways on a wall: his feet aren't at the bottom

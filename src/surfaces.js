@@ -167,6 +167,86 @@ function footing(line, feet) {
   return Math.abs(dx) <= MAX_NUDGE ? dx : null;
 }
 
+// Boxes on screen (the message box you type in, message bubbles, cards):
+// horizontal edges that start and end at the same x, one above another, are
+// the top and bottom of one box. Rounded corners only shorten them both a
+// little. Full-width rules (window headers, the floor) aren't boxes. Unrelated
+// edges can line up too, so each top is paired with the nearest bottom first,
+// and a pairing only counts if `accept` (the side check) agrees.
+function findBoxes(lines, worldWidth, accept = () => true) {
+  const BOX_MIN_W = 120;
+  const BOX_MIN_H = 24;
+  const BOX_MAX_H = 600;
+  const SAME_END = 8;
+  const cands = lines
+    .filter((l) => l.x1 - l.x0 >= BOX_MIN_W && l.x1 - l.x0 < worldWidth * 0.95)
+    .sort((p, q) => p.y - q.y);
+  const sameEnds = (p, q) => Math.abs(p.x0 - q.x0) <= SAME_END && Math.abs(p.x1 - q.x1) <= SAME_END;
+  const boxes = [];
+  const used = new Set();
+  for (const top of cands) {
+    if (used.has(top)) continue;
+    const bottoms = cands.filter((l) => !used.has(l) && l.y - top.y >= BOX_MIN_H && l.y - top.y <= BOX_MAX_H && sameEnds(l, top));
+    for (const bottom of bottoms) {
+      // Both edges of a thin border, top and bottom, belong to the box.
+      const group = cands.filter((l) => l.y >= top.y && l.y <= bottom.y + 3 && sameEnds(l, top)
+        && (l.y - top.y <= 3 || bottom.y - l.y <= 3 || l === bottom));
+      const box = {
+        x0: Math.min(...group.map((l) => l.x0)),
+        x1: Math.max(...group.map((l) => l.x1)),
+        top: top.y,
+        bottom: Math.max(...group.map((l) => l.y)),
+        // An end hidden behind a Clawd: the box may go further that way.
+        hiddenLeft: group.some((l) => l.hiddenLeft),
+        hiddenRight: group.some((l) => l.hiddenRight),
+      };
+      if (!accept(box)) continue;
+      group.forEach((l) => used.add(l));
+      boxes.push(box);
+      break;
+    }
+  }
+  return boxes;
+}
+
+// A real box also has left and right sides: a vertical edge near each end
+// for most of its height (below the rounded corners).
+function hasSides(img, display, box) {
+  const sf = display.scaleFactor;
+  const side = (x) => {
+    const y0 = box.top + 10;
+    const y1 = box.bottom - 10;
+    if (y1 - y0 < 6) return true; // too short to tell: trust the edges
+    const region = {
+      x: Math.max(0, Math.round((x - 8 - display.bounds.x) * sf)),
+      y: Math.max(0, Math.round((y0 - display.bounds.y) * sf)),
+      width: Math.round(16 * sf),
+      height: Math.round((y1 - y0) * sf),
+    };
+    const size = img.getSize();
+    region.width = Math.min(region.width, size.width - region.x);
+    region.height = Math.min(region.height, size.height - region.y);
+    if (region.width < 3 || region.height < 3) return false;
+    const buf = img.crop(region).toBitmap();
+    const w = region.width;
+    let rows = 0;
+    for (let r = 0; r < region.height; r++) {
+      for (let c = 1; c < w; c++) {
+        const p = (r * w + c) * 4;
+        const q = p - 4;
+        if (Math.abs(lum(buf[p], buf[p + 1], buf[p + 2]) - lum(buf[q], buf[q + 1], buf[q + 2])) >= EDGE_STEP) {
+          rows++;
+          break;
+        }
+      }
+    }
+    return rows / region.height >= 0.8;
+  };
+  // A side hidden behind a Clawd can't be checked; the other one must be there.
+  if (box.hiddenLeft && box.hiddenRight) return false;
+  return (box.hiddenLeft || side(box.x0)) && (box.hiddenRight || side(box.x1));
+}
+
 class Surfaces {
   constructor({ getWindow, getMask, log }) {
     this.log = log || (() => {});
@@ -291,6 +371,34 @@ class Surfaces {
     return { here: withEnds(here), other: withEnds(lines[0]), ok: true };
   }
 
+  // Boxes inside his world (Claude's window), refreshed at most every 1.5 s.
+  // Returns the last known list straight away; never throws.
+  boxes(world) {
+    const now = Date.now();
+    if (!this.boxCache || (now - this.boxCache.at > 1500 && !this.boxCache.pending)) {
+      const cache = this.boxCache || { at: 0, list: [] };
+      cache.pending = true;
+      this.boxCache = cache;
+      this.scanBoxes(world).then((list) => {
+        cache.list = list;
+      }, () => {}).finally(() => {
+        cache.at = Date.now();
+        cache.pending = false;
+      });
+    }
+    return this.boxCache.list;
+  }
+
+  async scanBoxes(world) {
+    const win = this.getWindow();
+    const rect = { x0: world.x0, x1: world.x1, y0: world.top + 1, y1: world.floor.y - 1 };
+    const display = screen.getDisplayMatching({ x: rect.x0, y: rect.y0, width: rect.x1 - rect.x0, height: rect.y1 - rect.y0 });
+    const img = await capture(win, display);
+    if (!img || img.isEmpty()) return [];
+    const lines = findLines(img, display, rect, this.getMask());
+    return findBoxes(lines, world.x1 - world.x0, (box) => hasSides(img, display, box));
+  }
+
   // Is there still something under his feet right now?
   async supported(bounds, floor) {
     const feet0 = feetOf(bounds);
@@ -300,4 +408,4 @@ class Surfaces {
   }
 }
 
-module.exports = { Surfaces, FEET_Y, FEET_L, FEET_R, HEAD_Y, findLines };
+module.exports = { Surfaces, FEET_Y, FEET_L, FEET_R, HEAD_Y, findLines, findBoxes };

@@ -362,7 +362,8 @@ app.whenReady().then(() => {
   };
   const surfacesDebug = async () => {
     const result = await surfaces.survey(lead().win.getBounds());
-    return { feet: result.feet, lines: result.lines.map((l) => ({ ...l, y: Math.round(l.y), x0: Math.round(l.x0), x1: Math.round(l.x1) })) };
+    const boxes = await surfaces.scanBoxes(world());
+    return { feet: result.feet, boxes, lines: result.lines.map((l) => ({ ...l, y: Math.round(l.y), x0: Math.round(l.x0), x1: Math.round(l.x1) })) };
   };
   const settleNow = () => lead().physics.settle();
   // Same as letting go of a drag at window position (x, y), optionally thrown.

@@ -2,6 +2,7 @@
 const assert = require('assert');
 const { Brain, toolActivity, shellActivity, ultraFromText } = require('../src/brain');
 const { sanitizeOutfit } = require('../src/outfits');
+const { findBoxes } = require('../src/surfaces');
 
 global.window = {};
 require('../renderer/seasonal.js');
@@ -81,6 +82,21 @@ test('talking about ultracode does not make him hyper', () => {
   const { ev, last } = makeBrain();
   ev('a', 'UserPromptSubmit', { prompt: 'why is he acting like ultracode is on?' });
   assert.equal(!!last('hyper'), false);
+});
+
+test('boxes: top and bottom edges with the same ends, nearest first', () => {
+  const L = (y, x0, x1) => ({ y, x0, x1 });
+  const lines = [
+    L(786, 279, 757), L(824, 279, 757), // a box higher up whose ends line up with the text box
+    L(950, 271, 764), L(951, 271, 764), L(992, 271, 764), // the text box (thin border: two top edges)
+    L(1032, 0, 1920), // the floor: full width, not a box
+  ];
+  const boxes = findBoxes(lines, 1920);
+  assert.deepEqual(boxes.map((b) => [b.top, b.bottom]), [[786, 824], [950, 992]]);
+  // If the side check rejects the near pairing, the tall one isn't taken instead
+  // when it has no sides either.
+  const strict = findBoxes(lines, 1920, (b) => b.bottom - b.top < 100);
+  assert.deepEqual(strict.map((b) => [b.top, b.bottom]), [[786, 824], [950, 992]]);
 });
 
 test('prompt -> thinking, tool -> typing, stop -> happy + idle', () => {

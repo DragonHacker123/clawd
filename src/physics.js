@@ -32,10 +32,16 @@ const HYPER_TICK_MS = 600; // how often he picks his next stunt
 // left edge sits from the wall (left wall), or from the wall minus the window
 // (right wall), so his feet touch it.
 const CLIMB_INSET = SIZE - FEET_Y;
+// His body (viewBox x 2..13, head top y 6 to feet y 15), for bumping into boxes.
+const BODY_L = FEET_L - (1 * 150 * S) / 45;
+const BODY_R = FEET_R + (1 * 150 * S) / 45;
+const BODY_TOP = FEET_Y - (9 * 150 * S) / 45;
 const CLIMB_BODY = 25 * S; // half his width incl. arms: his side rests this far above the floor as he starts up
 
 class Physics {
-  constructor({ getWindow, surfaces, send, settings, world, onRest, log, heads, isShown }) {
+  constructor({ getWindow, surfaces, send, settings, world, onRest, log, heads, isShown, boxes }) {
+    // Boxes he can't be inside (the message box, bubbles): [{ x0, x1, top, bottom }].
+    this.boxes = boxes || (() => []);
     this.isShown = isShown || (() => true);
     this.heads = heads || (() => []); // other Clawds' heads: ledges he can land on
     this.getWindow = getWindow;
@@ -191,7 +197,9 @@ class Physics {
     const rise = vy < 0 ? (vy * vy) / (2 * G) + 10 : 0;
     this.surfaces.scanWide(this.bounds(), w.floor, rise).then((lines) => {
       if (this.mode !== 'air') return;
-      this.lines = lines;
+      const boxes = this.boxes();
+      const inside = (l) => boxes.some((b) => l.y > b.top + 2 && l.y <= b.bottom + 2 && l.x1 > b.x0 && l.x0 < b.x1);
+      this.lines = lines.filter((l) => l.kind === 'floor' || l.kind === 'taskbar' || !inside(l));
       if (ledgeGrab) {
         // Dropped just below a ledge: he grabs it and pulls himself up.
         const c = this.center();
@@ -234,8 +242,17 @@ class Physics {
     this.vy = Math.min(MAX_FALL, this.vy + G * dt);
     this.vx *= Math.pow(AIR_DRAG, dt);
     const prevFeet = this.feetY();
+    const wasIn = this.boxAt(this.x, this.y);
     this.x += this.vx * dt;
+    if (!wasIn && this.boxAt(this.x, this.y)) {
+      this.x -= this.vx * dt; // into a box's side: bounce off
+      this.vx = -this.vx * 0.35;
+    }
     this.y += this.vy * dt;
+    if (!wasIn && this.vy < 0 && this.boxAt(this.x, this.y)) {
+      this.y -= this.vy * dt; // head into a box's underside: bonk
+      this.vy = 0;
+    }
 
     // Walls: the sides of his world (screen or Claude's window). Bounce softly.
     const minX = w.x0 - FEET_L + 2;
@@ -374,7 +391,15 @@ class Physics {
 
   walkStep(dt) {
     const wk = this.walk;
-    this.x += wk.dir * wk.speed * dt;
+    const nx = this.x + wk.dir * wk.speed * dt;
+    if (this.boxAt(nx, this.y) && !this.boxAt(this.x, this.y)) {
+      // A box in the way: he stops at its side.
+      this.walk = null;
+      this.motion('ground');
+      this.onRest();
+      return;
+    }
+    this.x = nx;
     if ((wk.dir > 0 && this.x >= wk.targetX) || (wk.dir < 0 && this.x <= wk.targetX)) {
       this.x = wk.targetX;
       this.walk = null;
@@ -409,6 +434,44 @@ class Physics {
     this.walk = null;
     this.motion('ground');
     this.onRest();
+  }
+
+  // ---------- boxes ----------
+
+  // The box his body would overlap with the window at (x, y), if any. An end
+  // hidden behind a Clawd might go on further, so it reaches a bit beyond.
+  boxAt(x, y) {
+    const l = x + BODY_L;
+    const r = x + BODY_R;
+    const top = y + BODY_TOP;
+    const feet = y + FEET_Y;
+    for (const b of this.boxes()) {
+      const x0 = b.hiddenLeft ? b.x0 - 80 * S : b.x0;
+      const x1 = b.hiddenRight ? b.x1 + 80 * S : b.x1;
+      if (r > x0 && l < x1 && feet > b.top + 2 && top < b.bottom - 2) return b;
+    }
+    return null;
+  }
+
+  // Inside a box (dropped there, the box grew round him, a ledge inside it):
+  // he hops up onto its top.
+  escapeBox() {
+    if (this.mode !== 'ground' || !this.sync()) return false;
+    const b = this.boxAt(this.x, this.y);
+    if (!b) return false;
+    const w = this.world();
+    const c = this.center();
+    const x0 = Math.max(b.x0, w.x0) + HALF_FEET + 6;
+    const x1 = Math.min(b.x1, w.x1) - HALF_FEET - 6;
+    if (x1 > x0 && (c < x0 || c > x1)) {
+      this.x = Math.max(x0, Math.min(x1, c)) - CENTER;
+      this.place();
+    }
+    const rise = Math.max(0, this.feetY() - b.top) + 30 * S;
+    this.walk = null;
+    this.ground = null;
+    this.launch(0, -Math.sqrt(2 * G * rise), 'hop', { ignoreY: b.bottom });
+    return true;
   }
 
   // ---------- hyper mode (ultracode) ----------

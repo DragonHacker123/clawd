@@ -155,9 +155,11 @@ async function lastUserPrompt(file) {
 }
 
 class Brain {
-  constructor({ send, outfits, settings, onBusyChange, onPosture = () => {}, memoryFile = null, visible = () => null, appUltra = () => undefined }) {
+  constructor({ onSessionFlash = () => {}, send, outfits, settings, onBusyChange, onPosture = () => {}, memoryFile = null, visible = () => null, appUltra = () => undefined }) {
     // The app's own Ultracode switch for a session (true/false/undefined).
     this.appUltra = appUltra;
+    // A reaction for a session shown by an extra Clawd (not the main one).
+    this.onSessionFlash = onSessionFlash;
     // Sessions on screen in the app (a Set of ids), or null when unknown.
     this.visible = visible;
     this.memoryFile = memoryFile; // outfits per session, so a restart doesn't undress everyone
@@ -232,6 +234,9 @@ class Brain {
       }
       case 'PreToolUse':
         s.busy = true;
+        // Code sessions in the desktop app get the Clawd chat extension too; its
+        // call reaches us right after this hook, so credit it to this session.
+        if (/^mcp__clawd__/i.test(String(ev.tool_name || ''))) this.pendingCodeCall = { id: s.id, at: t };
         s.activity = toolActivity(ev.tool_name, ev.tool_input || {});
         break;
       case 'PostToolUse':
@@ -383,6 +388,11 @@ class Brain {
   }
 
   chatEvent(body = {}) {
+    const code = this.pendingCodeCall;
+    if (code && Date.now() - code.at < 15000 && this.sessions.has(code.id)) {
+      this.pendingCodeCall = null;
+      return this.applyTool(this.sessions.get(code.id), body);
+    }
     // A chat tool call means Claude chat is working on something for you, so
     // chat takes focus and counts as busy ("chatting": he does his normal idle
     // animations in costume and doesn't fall asleep) until it says it's done,
@@ -406,24 +416,31 @@ class Brain {
       return { ok: true, message: 'Clawd will stay awake while you work.' };
     }
     this.publish();
+    return this.applyTool(chat, body);
+  }
 
+  // What a Clawd tool call asks for, for the session that made it. (Busy /
+  // done for Code sessions comes from their hooks, so status is a no-op there.)
+  applyTool(s, body) {
+    if (body.action === 'status') return { ok: true, message: 'Noted.' };
     if (body.action === 'mood') {
       if (!MOODS.includes(body.mood)) return { ok: false, message: `mood must be one of ${MOODS.join(', ')}` };
-      this.send('flash', { state: body.mood, ms: 3200 });
+      if (this.isFocus(s)) this.send('flash', { state: body.mood, ms: 3200 });
+      else this.onSessionFlash(s.id, body.mood);
       return { ok: true, message: 'Clawd reacted.' };
     }
     if (body.action === 'topic') {
       if (!this.settings().outfits) return { ok: true, message: 'Topic outfits are switched off.' };
       const drawn = body.accessory && sanitizeOutfit({ ...body.accessory, topic: body.topic, label: body.label });
       if (drawn) {
-        this.dress(chat, drawn);
+        this.dress(s, drawn);
         return { ok: true, message: `Clawd is now wearing: ${drawn.name || drawn.topic}.` };
       }
       this.outfits
         .make(String(body.topic || ''), { avoidSlots: this.seasonalSlots(), isTopic: true })
         .then((outfit) => {
-          if (!outfit) return;
-          this.dress(chat, outfit);
+          if (!outfit || !this.sessions.has(s.id)) return;
+          this.dress(s, outfit);
         })
         .catch((err) => console.error('outfit failed', err));
       return { ok: true, message: 'Clawd is picking an outfit for that topic.' };

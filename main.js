@@ -341,6 +341,10 @@ app.whenReady().then(() => {
     memoryFile: path.join(app.getPath('userData'), 'session-outfits.json'),
     visible: () => appLayout.visible,
     appUltra: (id) => appLayout.ultracode(id),
+    onSessionFlash: (id, mood) => {
+      const pet = flock.extras().find((p) => p.sessionId === id);
+      if (pet) pet.send('flash', { state: mood, ms: 3200 });
+    },
   });
   // Sessions already open in the app get their Clawds now, not on their next event.
   const projectsDir = path.join(require('os').homedir(), '.claude', 'projects');

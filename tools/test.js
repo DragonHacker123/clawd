@@ -99,6 +99,22 @@ test('boxes: top and bottom edges with the same ends, nearest first', () => {
   assert.deepEqual(strict.map((b) => [b.top, b.bottom]), [[786, 824], [950, 992]]);
 });
 
+test('a Code session using the Clawd extension is not "chat"', () => {
+  const { brain, ev } = makeBrain();
+  ev('a', 'UserPromptSubmit', { prompt: 'build the mobile logging app please' });
+  ev('a', 'PreToolUse', { tool_name: 'mcp__Clawd__clawd_set_topic', tool_input: {} });
+  const res = brain.chatEvent({
+    action: 'topic', topic: 'Logging app', label: '📱 Logging app',
+    accessory: { name: 'phone', slot: 'companion', rects: [{ x: 17, y: 8, w: 5, h: 7, fill: '#222222' }, { x: 18, y: 9, w: 3, h: 4, fill: '#88CCFF' }, { x: 19, y: 14, w: 1, h: 0.5, fill: '#FFFFFF' }] },
+  });
+  assert.equal(res.ok, true);
+  assert.equal(brain.sessions.has('chat'), false);
+  assert.equal(brain.sessions.get('a').outfit.topic, 'Logging app');
+  // A real chat call (no Code tool call just before) still counts as chat.
+  brain.chatEvent({ action: 'status', state: 'working' });
+  assert.equal(brain.sessions.get('chat').busy, true);
+});
+
 test('prompt -> thinking, tool -> typing, stop -> happy + idle', () => {
   const { ev, last, sent } = makeBrain();
   ev('a', 'UserPromptSubmit', { prompt: 'fix the bug please, the parser crashes' });

@@ -335,9 +335,27 @@ class Brain {
   }
 
   maybeDress(s, text) {
-    if (s.outfitAsked || !this.settings().outfits) return;
+    if (!this.settings().outfits) return;
     const clean = text.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, ' ').trim();
     if (clean.length < MIN_TOPIC_PROMPT || clean.startsWith('/')) return;
+    // Already dressed: re-dress only when this message is about something new.
+    if (s.outfitAsked) {
+      if (!s.outfit || s.topicCheck || !this.outfits.topicChanged) return;
+      s.topicCheck = true;
+      this.outfits
+        .topicChanged(s.outfit.topic || s.outfit.label || s.outfit.name, clean)
+        .then((changed) => {
+          s.topicCheck = false;
+          if (!changed || !this.sessions.has(s.id)) return;
+          s.outfitAsked = false;
+          this.maybeDress(s, clean);
+        })
+        .catch((err) => {
+          s.topicCheck = false;
+          console.error('topic check failed', err);
+        });
+      return;
+    }
     s.outfitAsked = true;
     this.outfits
       .make(clean, { avoidSlots: this.seasonalSlots(), where: path.basename(String(s.cwd || '')) })

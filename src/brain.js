@@ -62,8 +62,7 @@ function toolActivity(name = '', input = {}) {
 // ultra_effort_enter / ultra_effort_exit marker. Whichever comes last wins.
 // (Quotes inside messages are escaped in the transcript, so talking about
 // these strings never matches.)
-const ULTRA_EFFORTS = new Set(['xhigh']);
-const ULTRA_SIGNS = /"perTurnEffort":"([a-z]+)"|"attachment":\{"type":"ultra_effort_(enter|exit)"/g;
+const ULTRA_SIGNS = /"attachment":\{"type":"ultra_effort_(enter|exit)"/g;
 const CHUNK = 1024 * 1024;
 const MAX_BACK = 64 * CHUNK; // give up looking further back than this
 
@@ -72,8 +71,7 @@ function ultraFromText(text) {
   let last = null;
   for (const m of text.matchAll(ULTRA_SIGNS)) last = m;
   if (!last) return null;
-  if (last[2]) return last[2] === 'enter';
-  return ULTRA_EFFORTS.has(last[1]);
+  return last[1] === 'enter';
 }
 
 async function readSlice(fh, start, end) {
@@ -157,7 +155,9 @@ async function lastUserPrompt(file) {
 }
 
 class Brain {
-  constructor({ send, outfits, settings, onBusyChange, onPosture = () => {}, memoryFile = null, visible = () => null }) {
+  constructor({ send, outfits, settings, onBusyChange, onPosture = () => {}, memoryFile = null, visible = () => null, appUltra = () => undefined }) {
+    // The app's own Ultracode switch for a session (true/false/undefined).
+    this.appUltra = appUltra;
     // Sessions on screen in the app (a Set of ids), or null when unknown.
     this.visible = visible;
     this.memoryFile = memoryFile; // outfits per session, so a restart doesn't undress everyone
@@ -272,7 +272,7 @@ class Brain {
       s.fresh = false;
       if (ev.hook_event_name !== 'UserPromptSubmit') this.dressFromTranscript(s);
     }
-    s.ultra = !!(s.ultraSession || s.ultraTurn);
+    s.ultra = this.ultraOf(s);
     this.checkUltra(s, ev.hook_event_name === 'UserPromptSubmit');
     this.refocus();
     this.publish();
@@ -301,11 +301,24 @@ class Brain {
     } finally {
       s.ultraBusy = false;
     }
-    const ultra = !!(s.ultraSession || s.ultraTurn);
+    const ultra = this.ultraOf(s);
     if (ultra !== s.ultra) {
       s.ultra = ultra;
       this.publish();
     }
+  }
+
+  // Ultracode: the app's switch when it knows the session, otherwise the
+  // CLI's transcript markers; the "ultracode" keyword counts for its turn.
+  ultraOf(s) {
+    const app = this.appUltra(s.id);
+    return !!(s.ultraTurn || (app === undefined ? s.ultraSession : app));
+  }
+
+  // The app's switch changed (no hook event for that): re-check everyone.
+  refreshUltra() {
+    for (const s of this.sessions.values()) s.ultra = this.ultraOf(s);
+    this.publish();
   }
 
   isFocus(s) {

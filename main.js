@@ -340,11 +340,15 @@ app.whenReady().then(() => {
     onPosture: (sit) => flock.primary && flock.primary.send('posture', sit ? 'sit' : 'stand'),
     memoryFile: path.join(app.getPath('userData'), 'session-outfits.json'),
     visible: () => appLayout.visible,
+    appUltra: (id) => appLayout.ultracode(id),
   });
   // Sessions already open in the app get their Clawds now, not on their next event.
   const projectsDir = path.join(require('os').homedir(), '.claude', 'projects');
   brain.discover(projectsDir).then(() => brain.adoptVisible(projectsDir, appLayout.info));
-  appLayout.onChange = () => brain.adoptVisible(projectsDir, appLayout.info);
+  appLayout.onChange = () => {
+    brain.adoptVisible(projectsDir, appLayout.info);
+    brain.refreshUltra();
+  };
 
   // ---------- debug routes (localhost + token only), acting on the primary Clawd ----------
   const lead = () => flock.primary;

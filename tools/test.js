@@ -73,13 +73,8 @@ test('ultracode markers in a transcript', () => {
   assert.equal(ultraFromText(off + '\n' + on), true);
   // Talking about the marker (escaped inside a message) doesn't count.
   assert.equal(ultraFromText(JSON.stringify({ text: on })), null);
-  // The desktop app's Ultracode is effort xhigh on each reply; the latest reply wins.
-  const turn = (e) => `{"type":"assistant","effort":"${e}","perTurnEffort":"${e}"}`;
-  assert.equal(ultraFromText(turn('xhigh')), true);
-  assert.equal(ultraFromText(turn('xhigh') + '\n' + turn('high')), false);
-  assert.equal(ultraFromText(turn('medium') + '\n' + turn('xhigh')), true);
-  assert.equal(ultraFromText(off + '\n' + turn('xhigh')), true);
-  assert.equal(ultraFromText(JSON.stringify({ text: turn('xhigh') })), null);
+  // Effort "Extra" (xhigh) is not ultracode.
+  assert.equal(ultraFromText('{"type":"assistant","effort":"xhigh","perTurnEffort":"xhigh"}'), null);
 });
 
 test('ultracode keyword -> hyper for that turn', () => {

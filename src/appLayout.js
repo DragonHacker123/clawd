@@ -30,6 +30,8 @@ class AppLayout {
     this.visible = null; // Set of Claude Code session ids, or null when unknown
     this.info = new Map(); // cli id -> { cwd, title }
     this.cliOf = new Map(); // local id -> cli id
+    this.files = new Map(); // cli id -> { file, mtime } (the app's session file)
+    this.ultra = new Map(); // cli id -> the app's Ultracode switch for that session
     this.mtime = 0;
     this.timer = setInterval(() => this.poll(), 1500);
     this.poll();
@@ -40,6 +42,7 @@ class AppLayout {
       .map((d) => ({ d, t: fs.statSync(path.join(d, 'claude_desktop_config.json')).mtimeMs }))
       .sort((a, b) => b.t - a.t)[0];
     if (!dir) return;
+    this.pollSettings();
     if (dir.t === this.mtime && this.visible) return;
     this.mtime = dir.t;
     let store;
@@ -80,11 +83,44 @@ class AppLayout {
           if (!s.cliSessionId) return null;
           this.cliOf.set(localId, s.cliSessionId);
           this.info.set(s.cliSessionId, { cwd: s.cwd, title: s.title });
+          this.files.set(s.cliSessionId, { file, mtime: 0 });
+          this.readSettings(s.cliSessionId);
           return s.cliSessionId;
         }
       }
     } catch {}
     return null;
+  }
+
+  // Ultracode is a per-session switch the app saves in that session's file
+  // (sessionSettings.ultracode). It's separate from effort: "Extra" is effort
+  // xhigh without it. Re-read a session's file whenever it changes.
+  pollSettings() {
+    let changed = false;
+    for (const id of this.files.keys()) changed = this.readSettings(id) || changed;
+    if (changed) this.onChange(this.visible);
+  }
+
+  readSettings(id) {
+    const entry = this.files.get(id);
+    try {
+      const t = fs.statSync(entry.file).mtimeMs;
+      if (t === entry.mtime) return false;
+      entry.mtime = t;
+      const s = JSON.parse(fs.readFileSync(entry.file, 'utf8'));
+      const on = !!(s.sessionSettings && s.sessionSettings.ultracode);
+      if (this.ultra.get(id) === on) return false;
+      this.ultra.set(id, on);
+      this.log(`app: ${(s.title || id).slice(0, 40)} ultracode ${on ? 'on' : 'off'}`);
+      return true;
+    } catch {
+      return false; // mid-write: try again next time
+    }
+  }
+
+  // true/false from the app, or undefined when we don't know this session.
+  ultracode(id) {
+    return this.ultra.get(id);
   }
 
   dispose() {

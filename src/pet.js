@@ -177,6 +177,14 @@ class Pet {
 
   refreshVisibility() {
     this.setVisible(this.wantVisible());
+    // Windows can drop "no taskbar button" (e.g. a window made while Explorer
+    // is still starting after login), and then he shows up in the taskbar.
+    // Re-assert it every few seconds; it's a no-op when nothing changed.
+    const now = Date.now();
+    if (this.win && !this.win.isDestroyed() && now - (this.lastSkip || 0) > 5000) {
+      this.lastSkip = now;
+      this.win.setSkipTaskbar(true);
+    }
   }
 
   // Ask Windows what is really on top at his body's centre. Notification toasts,

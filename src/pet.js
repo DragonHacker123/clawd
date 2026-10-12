@@ -161,22 +161,37 @@ class Pet {
 
   // Shown while the Claude app is open and nothing covers HIM.
   wantVisible() {
+    return this.hiddenReason() === null;
+  }
+
+  // Why he's hidden right now (null: he isn't). Logged on every change, so
+  // "he wasn't showing" can be traced afterwards.
+  hiddenReason() {
     const { state, fg } = this.ctx;
     const f = fg();
-    if (this.physics.mode === 'held') return true; // never vanish from under your mouse mid-drag
-    if (this.ctx.hiddenByUser()) return false;
-    if (this.coveredBySystem) return false;
-    if (this.primary && state.onlyWhileWorking && !this.ctx.busy()) return false;
-    if (!state.onlyInClaude || !f.available) return true;
+    if (this.physics.mode === 'held') return null; // never vanish from under your mouse mid-drag
+    if (this.ctx.hiddenByUser()) return 'hidden from the tray menu';
+    if (this.coveredBySystem) return `covered by ${this.coveredBy || 'a system window'}`;
+    if (this.primary && state.onlyWhileWorking && !this.ctx.busy()) return 'only-while-working and nothing is working';
+    if (!state.onlyInClaude || !f.available) return null;
     const c = f.claude;
-    if (!c || c.min || !this.win) return false;
+    if (!c) return 'Claude app not found';
+    if (c.min) return 'Claude app minimised';
+    if (!this.win) return 'no window';
     const [wx, wy] = this.position();
     const b = { x0: wx + this.hitbox.x0, y0: wy + this.hitbox.y0, x1: wx + this.hitbox.x1, y1: wy + this.hitbox.y1 };
-    return !(f.above || []).some((r) => b.x0 < r.x + r.width && r.x < b.x1 && b.y0 < r.y + r.height && r.y < b.y1);
+    const over = (f.above || []).find((r) => b.x0 < r.x + r.width && r.x < b.x1 && b.y0 < r.y + r.height && r.y < b.y1);
+    if (over) return `a window is over him (${over.x},${over.y} ${over.width}x${over.height}; in front: ${f.fg})`;
+    return null;
   }
 
   refreshVisibility() {
-    this.setVisible(this.wantVisible());
+    const why = this.hiddenReason();
+    if (why !== this.lastHiddenReason) {
+      this.lastHiddenReason = why;
+      this.ctx.log(`Clawd ${this.id} ${why ? `hidden: ${why}` : 'shown'}`);
+    }
+    this.setVisible(why === null);
     // Windows can drop "no taskbar button" (e.g. a window made while Explorer
     // is still starting after login), and then he shows up in the taskbar.
     // Re-assert it every few seconds; it's a no-op when nothing changed.
@@ -202,6 +217,7 @@ class Pet {
       if (!covered) this.dodges = 0;
       if (covered !== this.coveredBySystem) {
         this.coveredBySystem = covered;
+        this.coveredBy = cls;
         this.noteClick(covered ? `covered by ${cls}: stepping aside` : 'no longer covered');
         this.refreshVisibility();
       }

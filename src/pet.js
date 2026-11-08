@@ -179,10 +179,37 @@ class Pet {
     if (c.min) return 'Claude app minimised';
     if (!this.win) return 'no window';
     const [wx, wy] = this.position();
-    const b = { x0: wx + this.hitbox.x0, y0: wy + this.hitbox.y0, x1: wx + this.hitbox.x1, y1: wy + this.hitbox.y1 };
+    // All of him (not just the clickable part), so a window covering most of
+    // him can't leave him counted as "shown" while you can't see him.
+    const hb = this.hitbox;
+    const b = { x0: wx + Math.min(40 * S, hb.x0), y0: wy + Math.min(75 * S, hb.y0), x1: wx + Math.max(110 * S, hb.x1), y1: wy + FEET_Y };
     const over = (f.above || []).find((r) => b.x0 < r.x + r.width && r.x < b.x1 && b.y0 < r.y + r.height && r.y < b.y1);
+    this.overRect = over && f.fg === 'claude' ? over : null;
     if (over) return `a window is over him (${over.x},${over.y} ${over.width}x${over.height}; in front: ${f.fg})`;
     return null;
+  }
+
+  // A small always-on-top window over him while you're in Claude (Spotify's
+  // mini player, a widget): walk out from under it rather than stay hidden.
+  dodgeWindow() {
+    const r = this.overRect;
+    if (!r) {
+      this.windowDodges = 0;
+      return;
+    }
+    const ph = this.physics;
+    const w = this.ctx.world();
+    if (r.width > (w.x1 - w.x0) / 2 || ph.mode !== 'ground' || ph.walk || !this.ctx.state.gravity) return;
+    if ((this.windowDodges || 0) >= 3) return; // can't get clear: wait it out
+    this.windowDodges = (this.windowDodges || 0) + 1;
+    const c = this.center();
+    const left = r.x - 110 * S - 12;
+    const right = r.x + r.width - 40 * S + 12;
+    // The nearer side, unless that's off the edge of his world.
+    let target = c < r.x + r.width / 2 ? left : right;
+    if (target + 40 * S < w.x0 || target + 110 * S > w.x1) target = target === left ? right : left;
+    if (ph.walkTo(target, 90 * S)) this.ctx.log(`Clawd ${this.id}: walking out from under a window at ${r.x},${r.y}`);
+    else this.windowDodges = 3;
   }
 
   refreshVisibility() {
@@ -192,6 +219,7 @@ class Pet {
       this.ctx.log(`Clawd ${this.id} ${why ? `hidden: ${why}` : 'shown'}`);
     }
     this.setVisible(why === null);
+    this.dodgeWindow();
     // Windows can drop "no taskbar button" (e.g. a window made while Explorer
     // is still starting after login), and then he shows up in the taskbar.
     // Re-assert it every few seconds; it's a no-op when nothing changed.

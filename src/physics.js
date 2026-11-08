@@ -248,12 +248,14 @@ class Physics {
     const prevFeet = this.feetY();
     const wasIn = this.boxAt(this.x, this.y);
     this.x += this.vx * dt;
-    if (!wasIn && this.boxAt(this.x, this.y)) {
+    const side = !wasIn && this.boxAt(this.x, this.y);
+    if (side && !this.isJumpTarget(side)) {
       this.x -= this.vx * dt; // into a box's side: bounce off
       this.vx = -this.vx * 0.35;
     }
     this.y += this.vy * dt;
-    if (!wasIn && this.vy < 0 && this.boxAt(this.x, this.y)) {
+    const under = !wasIn && this.vy < 0 && this.boxAt(this.x, this.y);
+    if (under && !this.isJumpTarget(under)) {
       this.y -= this.vy * dt; // head into a box's underside: bonk
       this.vy = 0;
     }
@@ -278,7 +280,9 @@ class Physics {
       const floor = w.floor;
       // Screen ledges (scanned at launch) plus other Clawds' heads (live).
       const tops = this.boxes().map((b) => ({ y: b.top, x0: b.x0, x1: b.x1, kind: 'edge', obstacle: b.kind === 'window' }));
-      const candidates = [...(this.lines ? this.lines : [floor]), ...tops, ...this.heads()];
+      // Tops first: where a scanned edge and a box's own top are at the same height,
+      // the box's (full width, not cut short by his own body) wins.
+      const candidates = [...tops, ...(this.lines ? this.lines : [floor]), ...this.heads()];
       const from = Math.min(this.checkedFeetY, prevFeet);
       const c = this.center();
       // Skip the ledge he was just knocked off (it's moving up past him).
@@ -300,6 +304,7 @@ class Physics {
   }
 
   land(line, impact) {
+    this.jumpTarget = null;
     this.y = line.y - FEET_Y;
     this.vx = 0;
     this.vy = 0;
@@ -402,13 +407,13 @@ class Physics {
   walkStep(dt) {
     const wk = this.walk;
     const nx = this.x + wk.dir * wk.speed * dt;
-    const block = !this.boxAt(this.x, this.y) && this.boxAt(nx, this.y);
+    const block = !this.boxAt(this.x, this.y) && this.boxAt(nx + wk.dir * 14 * S, this.y);
     if (block) {
-      // Something in the way: rather than go behind it, he climbs up its
-      // side and onto its top (if the top is somewhere he can be).
+      // Something just ahead: rather than go behind it, he jumps onto its top
+      // (if the top is somewhere he can be).
       this.walk = null;
       if (block.top - FEET_Y >= this.world().top - 20 * S && this.ground && block.top < this.ground.y - 8 * S) {
-        return this.startClimb(wk.dir, block);
+        return this.jumpOnto(block, wk.dir);
       }
       this.motion('ground');
       this.onRest();
@@ -564,22 +569,16 @@ class Physics {
   }
 
   // Turned 90°, feet on the wall, running up it.
-  // side: -1 = the wall is on his left, 1 = on his right. With `onto` (a
-  // box or window in his way) he climbs its side and steps onto its top;
-  // otherwise it's the side of his world and he leaps off part way up.
-  startClimb(side, onto = null) {
+  startClimb(side) {
     const w = this.world();
     const floorY = this.ground ? this.ground.y : w.floor.y;
     this.walk = null;
     this.ground = null;
     this.mode = 'climb';
-    const wallX = onto ? (side > 0 ? onto.x0 : onto.x1) : side < 0 ? w.x0 : w.x1;
-    this.x = side < 0 ? wallX - CLIMB_INSET : wallX - FEET_Y;
+    this.x = side < 0 ? w.x0 - CLIMB_INSET : w.x1 - FEET_Y;
     this.y = floorY - SIZE / 2 - CLIMB_BODY;
     const height = (180 + Math.random() * 420) * S;
-    this.climb = onto
-      ? { side, onto, topY: onto.top - SIZE / 2 - 4 * S }
-      : { side, topY: Math.max(w.top + 20 * S, this.y - height) };
+    this.climb = { side, topY: Math.max(w.top + 20 * S, this.y - height) };
     this.motion('climb', { side });
     this.loop(true);
     this.place();
@@ -588,24 +587,32 @@ class Physics {
   climbStep(dt) {
     if (!this.climb) return this.leap();
     this.y -= CLIMB_SPEED * dt;
-    if (this.y <= this.climb.topY) return this.climb.onto ? this.mount(this.climb) : this.leap();
+    if (this.y <= this.climb.topY) return this.leap();
     this.place();
   }
 
-  // Over the top: step onto it, just inside the edge he came up.
-  mount({ side, onto }) {
-    this.climb = null;
-    const c = side > 0 ? onto.x0 + HALF_FEET + 6 * S : onto.x1 - HALF_FEET - 6 * S;
-    this.x = c - CENTER;
-    this.y = onto.top - FEET_Y;
-    this.ground = { y: onto.top, x0: onto.x0, x1: onto.x1, kind: 'edge', obstacle: onto.kind === 'window' };
-    this.mode = 'ground';
-    this.vx = this.vy = 0;
-    this.loop(false);
-    this.place();
-    this.motion('ground');
-    this.stimulus();
-    this.onRest();
+  // Something in his way (a box, Spotify's mini player): a running jump onto
+  // its top, landing just inside the near edge. Aimed with gravity, so it
+  // works from the floor or any ledge below the top.
+  jumpOnto(b, dir) {
+    const c = this.center();
+    const inset = Math.min(40 * S, (b.x1 - b.x0) / 2); // well inside the edge, so he doesn't wobble off it
+    const target = dir > 0 ? b.x0 + inset : b.x1 - inset;
+    const clear = 40 * S; // how far over the top he goes before coming down
+    const rise = Math.max(0, this.feetY() - b.top) + clear;
+    const vy = -Math.sqrt(2 * G * rise);
+    const t = -vy / G + Math.sqrt((2 * clear) / G); // up to the apex, then down onto the top
+    const vx = ((target - c) / t) * 1.25; // a little extra for air drag
+    this.walk = null;
+    this.ground = null;
+    this.jumpTarget = b;
+    this.launch(vx, vy, 'hop');
+  }
+
+  // The box he's jumping onto doesn't push him back on the way up.
+  isJumpTarget(b) {
+    const t = this.jumpTarget;
+    return !!(t && b && Math.abs(t.x0 - b.x0) <= 3 && Math.abs(t.top - b.top) <= 3);
   }
 
   // Kick off the wall and fly back into the room.

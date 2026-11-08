@@ -366,7 +366,7 @@ app.whenReady().then(() => {
   };
   const surfacesDebug = async () => {
     const result = await surfaces.survey(lead().win.getBounds());
-    const boxes = await surfaces.scanBoxes(world());
+    const boxes = await surfaces.scanBoxes(world(), lead().windowObstacles());
     return { feet: result.feet, boxes, lines: result.lines.map((l) => ({ ...l, y: Math.round(l.y), x0: Math.round(l.x0), x1: Math.round(l.x1) })) };
   };
   const settleNow = () => lead().physics.settle();

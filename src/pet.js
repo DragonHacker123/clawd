@@ -48,7 +48,10 @@ class Pet {
       surfaces: ctx.surfaces,
       send: (ch, p) => this.send(ch, p),
       isShown: () => this.shown,
-      boxes: () => [...(this.shown ? ctx.surfaces.boxes(ctx.world()) : []), ...this.windowObstacles()],
+      boxes: () => {
+        const windows = this.windowObstacles();
+        return [...(this.shown ? ctx.surfaces.boxes(ctx.world(), windows) : []), ...windows];
+      },
       settings: () => ctx.state,
       world: ctx.world,
       heads: () => ctx.flock.headsExcept(this),

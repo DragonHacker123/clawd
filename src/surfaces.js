@@ -181,7 +181,9 @@ function findBoxes(lines, worldWidth, accept = () => true) {
   const cands = lines
     .filter((l) => l.x1 - l.x0 >= BOX_MIN_W && l.x1 - l.x0 < worldWidth * 0.95)
     .sort((p, q) => p.y - q.y);
-  const sameEnds = (p, q) => Math.abs(p.x0 - q.x0) <= SAME_END && Math.abs(p.x1 - q.x1) <= SAME_END;
+  // An end hidden (behind a Clawd or a window on top) can't disagree.
+  const sameEnds = (p, q) => (Math.abs(p.x0 - q.x0) <= SAME_END || p.hiddenLeft || q.hiddenLeft)
+    && (Math.abs(p.x1 - q.x1) <= SAME_END || p.hiddenRight || q.hiddenRight);
   const boxes = [];
   const used = new Set();
   for (const top of cands) {
@@ -373,13 +375,13 @@ class Surfaces {
 
   // Boxes inside his world (Claude's window), refreshed at most every 1.5 s.
   // Returns the last known list straight away; never throws.
-  boxes(world) {
+  boxes(world, windows = []) {
     const now = Date.now();
     if (!this.boxCache || (now - this.boxCache.at > 1500 && !this.boxCache.pending)) {
       const cache = this.boxCache || { at: 0, list: [] };
       cache.pending = true;
       this.boxCache = cache;
-      this.scanBoxes(world).then((list) => {
+      this.scanBoxes(world, windows).then((list) => {
         cache.list = list;
       }, () => {}).finally(() => {
         cache.at = Date.now();
@@ -389,13 +391,21 @@ class Surfaces {
     return this.boxCache.list;
   }
 
-  async scanBoxes(world) {
+  async scanBoxes(world, windows = []) {
     const win = this.getWindow();
     const rect = { x0: world.x0, x1: world.x1, y0: world.top + 1, y1: world.floor.y - 1 };
     const display = screen.getDisplayMatching({ x: rect.x0, y: rect.y0, width: rect.x1 - rect.x0, height: rect.y1 - rect.y0 });
     const img = await capture(win, display);
     if (!img || img.isEmpty()) return [];
     const lines = findLines(img, display, rect, this.getMask());
+    // An edge that stops where a window on top starts runs on behind it.
+    for (const l of lines) {
+      for (const w of windows) {
+        if (l.y < w.top - 2 || l.y > w.bottom + 2) continue;
+        if (Math.abs(l.x1 - w.x0) <= 6) l.hiddenRight = true;
+        if (Math.abs(l.x0 - w.x1) <= 6) l.hiddenLeft = true;
+      }
+    }
     return findBoxes(lines, world.x1 - world.x0, (box) => hasSides(img, display, box));
   }
 

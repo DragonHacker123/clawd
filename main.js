@@ -372,9 +372,12 @@ app.whenReady().then(() => {
   const settleNow = () => lead().physics.settle();
   // Same as letting go of a drag at window position (x, y), optionally thrown.
   // Put him somewhere without any checks (to test that the floor guard rescues him).
-  const teleport = ({ x, y }) => {
+  // With walkTo (a window x), he then walks there instead (to test running into things).
+  const teleport = ({ x, y, walkTo }) => {
     const p = lead();
-    if (p && p.win) p.win.setPosition(Math.round(x), Math.round(y));
+    if (!p || !p.win) return;
+    if (Number.isFinite(walkTo)) return p.physics.walkTo(walkTo, 60);
+    p.win.setPosition(Math.round(x), Math.round(y));
   };
   const dropAt = ({ x, y, vx = 0, vy = 0 }) => {
     const p = lead();

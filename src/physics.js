@@ -277,7 +277,8 @@ class Physics {
       // Never fall through the floor, even before the scan arrives.
       const floor = w.floor;
       // Screen ledges (scanned at launch) plus other Clawds' heads (live).
-      const candidates = [...(this.lines ? this.lines : [floor]), ...this.heads()];
+      const tops = this.boxes().map((b) => ({ y: b.top, x0: b.x0, x1: b.x1, kind: 'edge', obstacle: b.kind === 'window' }));
+      const candidates = [...(this.lines ? this.lines : [floor]), ...tops, ...this.heads()];
       const from = Math.min(this.checkedFeetY, prevFeet);
       const c = this.center();
       // Skip the ledge he was just knocked off (it's moving up past him).
@@ -401,9 +402,14 @@ class Physics {
   walkStep(dt) {
     const wk = this.walk;
     const nx = this.x + wk.dir * wk.speed * dt;
-    if (this.boxAt(nx, this.y) && !this.boxAt(this.x, this.y)) {
-      // A box in the way: he stops at its side.
+    const block = !this.boxAt(this.x, this.y) && this.boxAt(nx, this.y);
+    if (block) {
+      // Something in the way: rather than go behind it, he climbs up its
+      // side and onto its top (if the top is somewhere he can be).
       this.walk = null;
+      if (block.top - FEET_Y >= this.world().top - 20 * S && this.ground && block.top < this.ground.y - 8 * S) {
+        return this.startClimb(wk.dir, block);
+      }
       this.motion('ground');
       this.onRest();
       return;
@@ -558,16 +564,22 @@ class Physics {
   }
 
   // Turned 90°, feet on the wall, running up it.
-  startClimb(side) {
+  // side: -1 = the wall is on his left, 1 = on his right. With `onto` (a
+  // box or window in his way) he climbs its side and steps onto its top;
+  // otherwise it's the side of his world and he leaps off part way up.
+  startClimb(side, onto = null) {
     const w = this.world();
     const floorY = this.ground ? this.ground.y : w.floor.y;
     this.walk = null;
     this.ground = null;
     this.mode = 'climb';
-    this.x = side < 0 ? w.x0 - CLIMB_INSET : w.x1 - FEET_Y;
+    const wallX = onto ? (side > 0 ? onto.x0 : onto.x1) : side < 0 ? w.x0 : w.x1;
+    this.x = side < 0 ? wallX - CLIMB_INSET : wallX - FEET_Y;
     this.y = floorY - SIZE / 2 - CLIMB_BODY;
     const height = (180 + Math.random() * 420) * S;
-    this.climb = { side, topY: Math.max(w.top + 20 * S, this.y - height) };
+    this.climb = onto
+      ? { side, onto, topY: onto.top - SIZE / 2 - 4 * S }
+      : { side, topY: Math.max(w.top + 20 * S, this.y - height) };
     this.motion('climb', { side });
     this.loop(true);
     this.place();
@@ -576,8 +588,24 @@ class Physics {
   climbStep(dt) {
     if (!this.climb) return this.leap();
     this.y -= CLIMB_SPEED * dt;
-    if (this.y <= this.climb.topY) return this.leap();
+    if (this.y <= this.climb.topY) return this.climb.onto ? this.mount(this.climb) : this.leap();
     this.place();
+  }
+
+  // Over the top: step onto it, just inside the edge he came up.
+  mount({ side, onto }) {
+    this.climb = null;
+    const c = side > 0 ? onto.x0 + HALF_FEET + 6 * S : onto.x1 - HALF_FEET - 6 * S;
+    this.x = c - CENTER;
+    this.y = onto.top - FEET_Y;
+    this.ground = { y: onto.top, x0: onto.x0, x1: onto.x1, kind: 'edge', obstacle: onto.kind === 'window' };
+    this.mode = 'ground';
+    this.vx = this.vy = 0;
+    this.loop(false);
+    this.place();
+    this.motion('ground');
+    this.stimulus();
+    this.onRest();
   }
 
   // Kick off the wall and fly back into the room.

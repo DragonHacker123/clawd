@@ -48,7 +48,7 @@ class Pet {
       surfaces: ctx.surfaces,
       send: (ch, p) => this.send(ch, p),
       isShown: () => this.shown,
-      boxes: () => (this.shown ? ctx.surfaces.boxes(ctx.world()) : []),
+      boxes: () => [...(this.shown ? ctx.surfaces.boxes(ctx.world()) : []), ...this.windowObstacles()],
       settings: () => ctx.state,
       world: ctx.world,
       heads: () => ctx.flock.headsExcept(this),
@@ -182,34 +182,22 @@ class Pet {
     // All of him (not just the clickable part), so a window covering most of
     // him can't leave him counted as "shown" while you can't see him.
     const hb = this.hitbox;
-    const b = { x0: wx + Math.min(40 * S, hb.x0), y0: wy + Math.min(75 * S, hb.y0), x1: wx + Math.max(110 * S, hb.x1), y1: wy + FEET_Y };
+    const b = { x0: wx + Math.min(40 * S, hb.x0), y0: wy + Math.min(75 * S, hb.y0), x1: wx + Math.max(110 * S, hb.x1), y1: wy + FEET_Y - 3 }; // standing on top of a window is not behind it
     const over = (f.above || []).find((r) => b.x0 < r.x + r.width && r.x < b.x1 && b.y0 < r.y + r.height && r.y < b.y1);
-    this.overRect = over && f.fg === 'claude' ? over : null;
     if (over) return `a window is over him (${over.x},${over.y} ${over.width}x${over.height}; in front: ${f.fg})`;
     return null;
   }
 
-  // A small always-on-top window over him while you're in Claude (Spotify's
-  // mini player, a widget): walk out from under it rather than stay hidden.
-  dodgeWindow() {
-    const r = this.overRect;
-    if (!r) {
-      this.windowDodges = 0;
-      return;
-    }
-    const ph = this.physics;
+  // Small windows on top of Claude while you're in it (Spotify's mini
+  // player, a widget): solid, like the boxes in Claude. He climbs onto them
+  // rather than going behind them.
+  windowObstacles() {
+    const f = this.ctx.fg();
+    if (!f || f.fg !== 'claude' || !this.ctx.state.onlyInClaude) return [];
     const w = this.ctx.world();
-    if (r.width > (w.x1 - w.x0) / 2 || ph.mode !== 'ground' || ph.walk || !this.ctx.state.gravity) return;
-    if ((this.windowDodges || 0) >= 3) return; // can't get clear: wait it out
-    this.windowDodges = (this.windowDodges || 0) + 1;
-    const c = this.center();
-    const left = r.x - 110 * S - 12;
-    const right = r.x + r.width - 40 * S + 12;
-    // The nearer side, unless that's off the edge of his world.
-    let target = c < r.x + r.width / 2 ? left : right;
-    if (target + 40 * S < w.x0 || target + 110 * S > w.x1) target = target === left ? right : left;
-    if (ph.walkTo(target, 90 * S)) this.ctx.log(`Clawd ${this.id}: walking out from under a window at ${r.x},${r.y}`);
-    else this.windowDodges = 3;
+    return (f.above || [])
+      .filter((r) => r.width < (w.x1 - w.x0) / 2 && r.height < (w.floor.y - w.top) / 2)
+      .map((r) => ({ x0: r.x, x1: r.x + r.width, top: r.y, bottom: r.y + r.height, kind: 'window' }));
   }
 
   refreshVisibility() {
@@ -219,7 +207,6 @@ class Pet {
       this.ctx.log(`Clawd ${this.id} ${why ? `hidden: ${why}` : 'shown'}`);
     }
     this.setVisible(why === null);
-    this.dodgeWindow();
     // Windows can drop "no taskbar button" (e.g. a window made while Explorer
     // is still starting after login), and then he shows up in the taskbar.
     // Re-assert it every few seconds; it's a no-op when nothing changed.
@@ -429,7 +416,7 @@ class Pet {
   // him land again.
   guardFloor() {
     if (!this.win || this.win.isDestroyed() || this.closing || !this.ctx.state.gravity) return;
-    if (this.shown && this.physics.escapeBox()) {
+    if (this.physics.escapeBox()) {
       this.ctx.log(`box: Clawd ${this.id} was inside a box; hopping onto it`);
       return;
     }
@@ -470,6 +457,19 @@ class Pet {
     if (!this.win || !state.gravity || !this.shown || ph.mode !== 'ground' || surfaces.busy) return;
     const g = ph.ground;
     if (!g || g.kind === 'floor' || g.kind === 'taskbar' || g.kind === 'pet') return;
+    if (g.obstacle) {
+      // On top of a window: stay while it's there (riding it if it moves).
+      const c = this.center();
+      const win = this.windowObstacles().find((b) => c >= b.x0 - 4 && c <= b.x1 + 4 && Math.abs(b.top - g.y) <= 40);
+      if (win) {
+        if (win.top !== g.y) {
+          ph.rideTo({ y: win.top, x0: win.x0, x1: win.x1, kind: 'edge' });
+          if (ph.ground) ph.ground.obstacle = true;
+        }
+        return;
+      }
+      return ph.fallFromRest();
+    }
     surfaces.busy = true;
     try {
       const { here, other, ok } = await surfaces.track(this.win.getBounds(), ph.ground);
